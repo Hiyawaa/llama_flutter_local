@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Paste the permissions below into your android/app/src/main/AndroidManifest.xml
+  INSIDE the <manifest> tag, BEFORE the <application> tag.
+-->
+
+<!--  REQUIRED PERMISSIONS — add these: -->
+
+<!--
+<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
+<uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+
+Also inside <application> tag, add:
+  android:requestLegacyExternalStorage="true"
+-->
