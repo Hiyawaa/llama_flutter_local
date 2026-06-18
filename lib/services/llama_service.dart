@@ -7,34 +7,28 @@ class LlamaService {
   ModelStatus _status = ModelStatus.unloaded;
   String? _loadedPath;
   String? _errorMessage;
-  LlamadartModel? _model;
+  LlamaEngine? _engine;
 
   ModelStatus get status => _status;
   String? get loadedPath => _loadedPath;
   String? get errorMessage => _errorMessage;
   bool get isReady => _status == ModelStatus.ready;
 
-  Future<void> loadModel(
-    String path, {
-    int contextSize = 2048,
-    int threads = 4,
-  }) async {
+  Future<void> loadModel(String path,
+      {int contextSize = 2048, int threads = 4}) async {
     await unload();
     _status = ModelStatus.loading;
     _errorMessage = null;
 
     try {
-      _model = await LlamadartModel.load(
-        path,
-        contextSize: contextSize,
-        threads: threads,
-      );
+      _engine = LlamaEngine(LlamaBackend());
+      await _engine!.loadModel(path);
       _loadedPath = path;
       _status = ModelStatus.ready;
     } catch (e) {
       _status = ModelStatus.error;
       _errorMessage = e.toString();
-      _model = null;
+      _engine = null;
       rethrow;
     }
   }
@@ -47,33 +41,46 @@ class LlamaService {
     double topP = 0.95,
     double repeatPenalty = 1.1,
   }) async* {
-    if (_model == null || _status != ModelStatus.ready) {
+    if (_engine == null || !isReady) {
       throw StateError('Model not loaded');
     }
 
-    final prompt = systemPrompt.isNotEmpty
-        ? '$systemPrompt\n\nUser: $userMessage\nAssistant:'
-        : userMessage;
+    try {
+      // Use ChatSession for proper system prompt + chat template support
+      final session = ChatSession(
+        _engine!,
+        systemPrompt: systemPrompt.isNotEmpty ? systemPrompt : null,
+      );
 
-    yield* _model!.generate(
-      prompt,
-      temperature: temperature,
-      maxTokens: maxTokens,
-      topP: topP,
-      repeatPenalty: repeatPenalty,
-    );
+      await for (final chunk in session.create([
+        LlamaTextContent(userMessage),
+      ])) {
+        final content = chunk.choices.firstOrNull?.delta.content;
+        if (content != null && content.isNotEmpty) {
+          yield content;
+        }
+      }
+    } catch (_) {
+      // Fallback: raw generate if ChatSession isn't available
+      final prompt = systemPrompt.isNotEmpty
+          ? '$systemPrompt\n\nUser: $userMessage\nAssistant:'
+          : userMessage;
+      await for (final token in _engine!.generate(prompt)) {
+        yield token;
+      }
+    }
   }
 
   Future<void> unload() async {
-    _model?.dispose();
-    _model = null;
+    await _engine?.dispose();
+    _engine = null;
     _status = ModelStatus.unloaded;
     _loadedPath = null;
     _errorMessage = null;
   }
 
   void dispose() {
-    _model?.dispose();
-    _model = null;
+    _engine?.dispose();
+    _engine = null;
   }
 }
