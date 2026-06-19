@@ -154,7 +154,7 @@ class _PickerButton extends StatelessWidget {
   const _PickerButton({required this.provider});
 
   Future<void> _pick(BuildContext context) async {
-    final result = await FilePicker.pickFiles(
+    final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['gguf'],
       allowMultiple: false,

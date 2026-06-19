@@ -8,12 +8,12 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  llamadart: ^0.9.0
+  llamadart: ^0.8.1
   file_picker: ^8.0.0
   http: ^1.2.0
   provider: ^6.1.0
   shared_preferences: ^2.2.0
-  flutter_markdown_plus: ^0.7.7
+  flutter_markdown_plus: ^1.0.7
   flutter_math_fork: ^0.7.2
   path_provider: ^2.1.0
   path: ^1.9.0
