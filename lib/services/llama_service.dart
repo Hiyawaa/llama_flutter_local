@@ -8,6 +8,7 @@ class LlamaService {
   String? _loadedPath;
   String? _errorMessage;
   LlamaEngine? _engine;
+  bool _stopRequested = false; // ← stop flag
 
   ModelStatus get status => _status;
   String? get loadedPath => _loadedPath;
@@ -19,7 +20,6 @@ class LlamaService {
     await unload();
     _status = ModelStatus.loading;
     _errorMessage = null;
-
     try {
       _engine = LlamaEngine(LlamaBackend());
       await _engine!.loadModel(path);
@@ -33,6 +33,9 @@ class LlamaService {
     }
   }
 
+  // ── Stop mid-generation ──────────────────────────────────────────────────
+  void stop() => _stopRequested = true;
+
   Stream<String> chat(
     String userMessage, {
     String systemPrompt = '',
@@ -41,38 +44,33 @@ class LlamaService {
     double topP = 0.95,
     double repeatPenalty = 1.1,
   }) async* {
-    if (_engine == null || !isReady) {
-      throw StateError('Model not loaded');
-    }
+    if (_engine == null || !isReady) throw StateError('Model not loaded');
+    _stopRequested = false;
 
     try {
-      // Use ChatSession for proper system prompt + chat template support
       final session = ChatSession(
         _engine!,
         systemPrompt: systemPrompt.isNotEmpty ? systemPrompt : null,
       );
-
-      await for (final chunk in session.create([
-        LlamaTextContent(userMessage),
-      ])) {
+      await for (final chunk
+          in session.create([LlamaTextContent(userMessage)])) {
+        if (_stopRequested) break;
         final content = chunk.choices.firstOrNull?.delta.content;
-        if (content != null && content.isNotEmpty) {
-          yield content;
-        }
+        if (content != null && content.isNotEmpty) yield content;
       }
     } catch (_) {
-      // Fallback: raw generate if ChatSession isn't available
       final prompt = systemPrompt.isNotEmpty
           ? '$systemPrompt\n\nUser: $userMessage\nAssistant:'
           : userMessage;
       await for (final token in _engine!.generate(prompt)) {
+        if (_stopRequested) break;
         yield token;
       }
     }
   }
 
   Future<void> unload() async {
-    await _engine?.dispose();
+    _engine?.dispose();
     _engine = null;
     _status = ModelStatus.unloaded;
     _loadedPath = null;

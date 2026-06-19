@@ -5,6 +5,7 @@ import 'models/chat_provider.dart';
 import 'screens/model_picker_screen.dart';
 import 'screens/chat_screen.dart';
 import 'screens/huggingface_screen.dart';
+import 'screens/history_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -30,6 +31,7 @@ class LlamaDartApp extends StatelessWidget {
         '/': (_) => const ModelPickerScreen(),
         '/chat': (_) => const ChatScreen(),
         '/huggingface': (_) => const HuggingFaceScreen(),
+        '/history': (_) => const HistoryScreen(),
       },
     );
   }

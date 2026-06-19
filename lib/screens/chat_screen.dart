@@ -6,6 +6,7 @@ import '../models/chat_provider.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/ram_indicator.dart';
 import 'settings_screen.dart';
+import 'history_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -90,12 +91,28 @@ class _ChatScreenState extends State<ChatScreen> {
               ],
             ),
             actions: [
+              // History
+              IconButton(
+                icon: const Icon(Icons.history_rounded),
+                tooltip: 'Chat history',
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ChangeNotifierProvider.value(
+                      value: provider,
+                      child: const HistoryScreen(),
+                    ),
+                  ),
+                ),
+              ),
+              // Clear
               if (provider.messages.isNotEmpty)
                 IconButton(
                   icon: const Icon(Icons.delete_outline_rounded),
                   tooltip: 'Clear chat',
                   onPressed: () => _confirmClear(context, provider),
                 ),
+              // Settings
               IconButton(
                 icon: const Icon(Icons.tune_rounded),
                 tooltip: 'Settings',
@@ -124,9 +141,9 @@ class _ChatScreenState extends State<ChatScreen> {
                             ChatBubble(message: provider.messages[i]),
                       ),
               ),
-              // ── RAM indicator ────────────────────────────────────────────
+              // RAM indicator
               const RamIndicator(),
-              // ── Input bar ────────────────────────────────────────────────
+              // Input bar
               _inputBar(provider),
             ],
           ),
@@ -149,14 +166,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _inputBar(ChatProvider provider) => Container(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-        decoration: const BoxDecoration(
-          color: AppTheme.bgBase,
-        ),
+        color: AppTheme.bgBase,
         child: SafeArea(
           top: false,
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
+              // Text input
               Expanded(
                 child: Container(
                   constraints: const BoxConstraints(maxHeight: 130),
@@ -185,35 +201,61 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
               ),
               const SizedBox(width: 8),
-              GestureDetector(
-                onTap: provider.isGenerating ? null : () => _send(provider),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 150),
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: (_hasText && !provider.isGenerating)
-                        ? AppTheme.accentAmber.withAlpha((0.15 * 255).round())
-                        : AppTheme.bgSurface,
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: (_hasText && !provider.isGenerating)
-                          ? AppTheme.accentAmber.withAlpha((0.5 * 255).round())
-                          : AppTheme.borderColor,
-                    ),
-                  ),
-                  child: provider.isGenerating
-                      ? const Padding(
-                          padding: EdgeInsets.all(10),
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: AppTheme.accentAmber),
-                        )
-                      : Icon(Icons.arrow_upward_rounded,
-                          color: _hasText
-                              ? AppTheme.accentAmber
-                              : AppTheme.textMuted,
-                          size: 20),
-                ),
+
+              // ── Send / Stop button ────────────────────────────────────────
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 200),
+                child: provider.isGenerating
+
+                    // STOP button
+                    ? GestureDetector(
+                        key: const ValueKey('stop'),
+                        onTap: provider.stopGeneration,
+                        child: Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: AppTheme.accentRed.withAlpha(30),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                                color: AppTheme.accentRed.withAlpha(120)),
+                          ),
+                          child: const Icon(
+                            Icons.stop_rounded,
+                            color: AppTheme.accentRed,
+                            size: 20,
+                          ),
+                        ),
+                      )
+
+                    // SEND button
+                    : GestureDetector(
+                        key: const ValueKey('send'),
+                        onTap: _hasText ? () => _send(provider) : null,
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: _hasText
+                                ? AppTheme.accentAmber.withAlpha(40)
+                                : AppTheme.bgSurface,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: _hasText
+                                  ? AppTheme.accentAmber.withAlpha(150)
+                                  : AppTheme.borderColor,
+                            ),
+                          ),
+                          child: Icon(
+                            Icons.arrow_upward_rounded,
+                            color: _hasText
+                                ? AppTheme.accentAmber
+                                : AppTheme.textMuted,
+                            size: 20,
+                          ),
+                        ),
+                      ),
               ),
             ],
           ),

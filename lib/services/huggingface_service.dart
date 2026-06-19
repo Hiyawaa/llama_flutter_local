@@ -46,10 +46,15 @@ class HFFile {
   bool get isGguf => filename.toLowerCase().endsWith('.gguf');
 
   String get sizeLabel {
-    if (size <= 0) return 'Unknown size';
-    if (size < 1024 * 1024) return '${(size / 1024).toStringAsFixed(1)} KB';
-    if (size < 1024 * 1024 * 1024)
+    if (size <= 0) {
+      return 'Unknown size';
+    }
+    if (size < 1024 * 1024) {
+      return '${(size / 1024).toStringAsFixed(1)} KB';
+    }
+    if (size < 1024 * 1024 * 1024) {
       return '${(size / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
     return '${(size / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
 
