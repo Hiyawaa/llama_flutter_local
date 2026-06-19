@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 import '../models/app_theme.dart';
 import '../models/chat_provider.dart';
 import '../widgets/chat_bubble.dart';
+import '../widgets/ram_indicator.dart';
 import 'settings_screen.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -15,8 +16,8 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final _scrollCtrl = ScrollController();
-  final _inputCtrl  = TextEditingController();
-  final _focusNode  = FocusNode();
+  final _inputCtrl = TextEditingController();
+  final _focusNode = FocusNode();
   bool _hasText = false;
 
   @override
@@ -123,6 +124,9 @@ class _ChatScreenState extends State<ChatScreen> {
                             ChatBubble(message: provider.messages[i]),
                       ),
               ),
+              // ── RAM indicator ────────────────────────────────────────────
+              const RamIndicator(),
+              // ── Input bar ────────────────────────────────────────────────
               _inputBar(provider),
             ],
           ),
@@ -138,8 +142,7 @@ class _ChatScreenState extends State<ChatScreen> {
             Text('🦙', style: TextStyle(fontSize: 52)),
             SizedBox(height: 12),
             Text('Model loaded — start chatting!',
-                style: TextStyle(
-                    color: AppTheme.textSecondary, fontSize: 14)),
+                style: TextStyle(color: AppTheme.textSecondary, fontSize: 14)),
           ],
         ),
       );
@@ -148,7 +151,6 @@ class _ChatScreenState extends State<ChatScreen> {
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
         decoration: const BoxDecoration(
           color: AppTheme.bgBase,
-          border: Border(top: BorderSide(color: AppTheme.borderColor)),
         ),
         child: SafeArea(
           top: false,
@@ -176,17 +178,15 @@ class _ChatScreenState extends State<ChatScreen> {
                       border: InputBorder.none,
                       enabledBorder: InputBorder.none,
                       focusedBorder: InputBorder.none,
-                      contentPadding: EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 10),
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                     ),
                   ),
                 ),
               ),
               const SizedBox(width: 8),
               GestureDetector(
-                onTap: provider.isGenerating
-                    ? null
-                    : () => _send(provider),
+                onTap: provider.isGenerating ? null : () => _send(provider),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 150),
                   width: 40,
@@ -206,9 +206,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       ? const Padding(
                           padding: EdgeInsets.all(10),
                           child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: AppTheme.accentAmber,
-                          ),
+                              strokeWidth: 2, color: AppTheme.accentAmber),
                         )
                       : Icon(Icons.arrow_upward_rounded,
                           color: _hasText
