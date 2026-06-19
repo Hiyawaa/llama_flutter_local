@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:path/path.dart' as p;
 import '../models/app_theme.dart';
 import '../models/chat_provider.dart';
+import '../services/llama_service.dart' show ModelStatus;
 
 class ModelPickerScreen extends StatelessWidget {
   const ModelPickerScreen({super.key});
@@ -22,6 +23,8 @@ class ModelPickerScreen extends StatelessWidget {
               children: [
                 _StatusCard(provider: provider),
                 const SizedBox(height: 24),
+                _HuggingFaceButton(),
+                const SizedBox(height: 10),
                 _PickerButton(provider: provider),
                 const SizedBox(height: 12),
                 if (provider.llama.isReady)
@@ -37,7 +40,26 @@ class ModelPickerScreen extends StatelessWidget {
   }
 }
 
-// ── Status card ───────────────────────────────────────────────────────────────
+class _HuggingFaceButton extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 52,
+      child: ElevatedButton.icon(
+        onPressed: () => Navigator.pushNamed(context, '/huggingface'),
+        icon: const Text('🤗', style: TextStyle(fontSize: 18)),
+        label: const Text('Browse Hugging Face',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppTheme.accentAmber,
+          foregroundColor: Colors.black,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ),
+      ),
+    );
+  }
+}
 
 class _StatusCard extends StatelessWidget {
   final ChatProvider provider;
@@ -45,28 +67,25 @@ class _StatusCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final status = provider.llama.status;
     final filePath = provider.llama.loadedPath;
-    final bool isLoading = provider.isLoadingModel;
-    final bool isReady = provider.llama.isReady;
-    final bool hasError = provider.llama.errorMessage != null;
 
-    // Initialize with defaults — avoids "not assigned" errors
     Color color = AppTheme.textMuted;
     IconData icon = Icons.memory_outlined;
     String title = 'No model loaded';
-    String subtitle = 'Pick a .gguf file to get started';
+    String subtitle = 'Browse Hugging Face or pick a local .gguf file';
 
-    if (isLoading) {
+    if (status == ModelStatus.loading) {
       color = AppTheme.accentAmber;
       icon = Icons.hourglass_top_rounded;
       title = 'Loading model...';
       subtitle = 'This may take a moment';
-    } else if (isReady) {
+    } else if (status == ModelStatus.ready) {
       color = AppTheme.accentGreen;
       icon = Icons.check_circle_outline_rounded;
       title = 'Model ready';
       subtitle = filePath != null ? p.basename(filePath) : '';
-    } else if (hasError) {
+    } else if (status == ModelStatus.error) {
       color = AppTheme.accentRed;
       icon = Icons.error_outline_rounded;
       title = 'Load failed';
@@ -78,6 +97,7 @@ class _StatusCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppTheme.bgSurface,
         borderRadius: BorderRadius.circular(16),
+        // FIX: withOpacity → withValues
         border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Row(
@@ -89,7 +109,7 @@ class _StatusCard extends StatelessWidget {
               color: color.withValues(alpha: 0.1),
               shape: BoxShape.circle,
             ),
-            child: isLoading
+            child: status == ModelStatus.loading
                 ? Padding(
                     padding: const EdgeInsets.all(12),
                     child:
@@ -116,7 +136,7 @@ class _StatusCard extends StatelessWidget {
               ],
             ),
           ),
-          if (isReady)
+          if (status == ModelStatus.ready)
             IconButton(
               icon:
                   const Icon(Icons.close, color: AppTheme.textMuted, size: 18),
@@ -129,8 +149,6 @@ class _StatusCard extends StatelessWidget {
   }
 }
 
-// ── Picker button ─────────────────────────────────────────────────────────────
-
 class _PickerButton extends StatelessWidget {
   final ChatProvider provider;
   const _PickerButton({required this.provider});
@@ -141,32 +159,25 @@ class _PickerButton extends StatelessWidget {
       allowedExtensions: ['gguf'],
       allowMultiple: false,
     );
-
     if (result == null || result.files.isEmpty) return;
     final path = result.files.first.path;
     if (path == null) return;
     if (!context.mounted) return;
-
     await context.read<ChatProvider>().loadModel(path);
   }
 
   @override
   Widget build(BuildContext context) {
-    final isLoading = provider.isLoadingModel;
-
     return SizedBox(
-      height: 52,
-      child: ElevatedButton.icon(
-        onPressed: isLoading ? null : () => _pick(context),
-        icon: const Icon(Icons.folder_open_rounded),
-        label: Text(
-          provider.llama.isReady ? 'Load different model' : 'Pick GGUF file',
-          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-        ),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: AppTheme.accentAmber,
-          foregroundColor: Colors.black,
-          disabledBackgroundColor: AppTheme.textMuted,
+      height: 48,
+      child: OutlinedButton.icon(
+        onPressed: provider.isLoadingModel ? null : () => _pick(context),
+        icon: const Icon(Icons.folder_open_rounded,
+            color: AppTheme.textSecondary),
+        label: const Text('Pick local GGUF file',
+            style: TextStyle(color: AppTheme.textSecondary, fontSize: 14)),
+        style: OutlinedButton.styleFrom(
+          side: const BorderSide(color: AppTheme.borderColor),
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         ),
@@ -174,8 +185,6 @@ class _PickerButton extends StatelessWidget {
     );
   }
 }
-
-// ── Start chat button ─────────────────────────────────────────────────────────
 
 class _StartChatButton extends StatelessWidget {
   final ChatProvider provider;
@@ -189,13 +198,11 @@ class _StartChatButton extends StatelessWidget {
         onPressed: () => Navigator.pushNamed(context, '/chat'),
         icon: const Icon(Icons.chat_bubble_outline_rounded,
             color: AppTheme.accentGreen),
-        label: const Text(
-          'Start chatting',
-          style: TextStyle(
-              color: AppTheme.accentGreen,
-              fontSize: 15,
-              fontWeight: FontWeight.w600),
-        ),
+        label: const Text('Start chatting',
+            style: TextStyle(
+                color: AppTheme.accentGreen,
+                fontSize: 15,
+                fontWeight: FontWeight.w600)),
         style: OutlinedButton.styleFrom(
           side: const BorderSide(color: AppTheme.accentGreen, width: 1.5),
           shape:
@@ -205,8 +212,6 @@ class _StartChatButton extends StatelessWidget {
     );
   }
 }
-
-// ── Hint box ──────────────────────────────────────────────────────────────────
 
 class _HintBox extends StatelessWidget {
   const _HintBox();
@@ -223,16 +228,17 @@ class _HintBox extends StatelessWidget {
       child: const Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('💡 Where to get GGUF models',
+          Text('💡 Recommended models for Android',
               style: TextStyle(
                   color: AppTheme.textPrimary,
                   fontSize: 13,
                   fontWeight: FontWeight.w600)),
           SizedBox(height: 8),
           Text(
-            '• huggingface.co → search any model → Files tab → .gguf\n'
-            '• Recommended for phone: Q4_K_M quantization\n'
-            '• Good starters: Qwen2.5-1.5B, Phi-3-mini, Llama-3.2-3B',
+            '• Qwen2.5-Math-1.5B — best for math (~1 GB)\n'
+            '• Phi-3-mini-Q4_K_M — fast & smart (~2.3 GB)\n'
+            '• Llama-3.2-3B-Q4_K_M — great all-rounder (~2 GB)\n'
+            '• Use Q4_K_M quantization for best speed/quality',
             style: TextStyle(
                 color: AppTheme.textSecondary, fontSize: 12, height: 1.6),
           ),
