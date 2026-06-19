@@ -67,12 +67,11 @@ class _ModelPickerScreenState extends State<ModelPickerScreen> {
     final deduped = found.where((m) => seen.add(m.path)).toList();
     deduped.sort((a, b) => p.basename(a.path).compareTo(p.basename(b.path)));
 
-    if (mounted) {
+    if (mounted)
       setState(() {
         _localModels = deduped;
         _loadingModels = false;
       });
-    }
   }
 
   Future<void> _scanDir(String dirPath, List<_LocalModel> out,
@@ -325,14 +324,13 @@ class _LocalModelCard extends StatelessWidget {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis),
                   const SizedBox(height: 4),
-                  Row(
+                  Wrap(
+                    spacing: 5,
+                    runSpacing: 5,
                     children: [
                       _Chip(model.sizeLabel, color: AppTheme.accentAmber),
-                      if (model.quantLabel.isNotEmpty) ...[
-                        const SizedBox(width: 5),
+                      if (model.quantLabel.isNotEmpty)
                         _Chip(model.quantLabel, color: AppTheme.accentBlue),
-                      ],
-                      const SizedBox(width: 5),
                       _Chip(model.source, color: AppTheme.textMuted),
                     ],
                   ),
@@ -612,7 +610,7 @@ class _HintBox extends StatelessWidget {
             SizedBox(height: 8),
             Text(
               '• Qwen2.5-Math-1.5B — best for math (~1 GB)\n'
-              '• Phi-3-mini-Q4_K_M — fast & smart (~2.3 GB)\n'
+              '• Qwen2.5-Code-1.5B — best for coding (~1 GB)\n'
               '• Llama-3.2-3B-Q4_K_M — great all-rounder (~2 GB)\n'
               '• Q4_K_M = best speed/quality balance',
               style: TextStyle(
