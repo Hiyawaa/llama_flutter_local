@@ -172,13 +172,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _linkTile(
               icon: Icons.code_rounded,
               label: 'Source code (GitHub)',
-              onTap: () => _openUrl('https://github.com/yourname/llamadart'),
+              onTap: () =>
+                  _openUrl('https://github.com/Hiyawaa/llama_flutter_local'),
             ),
             _linkTile(
               icon: Icons.bug_report_outlined,
               label: 'Report an issue',
-              onTap: () =>
-                  _openUrl('https://github.com/yourname/llamadart/issues'),
+              onTap: () => _openUrl(
+                  'https://github.com/Hiyawaa/llama_flutter_local/issues'),
             ),
             _linkTile(
               icon: Icons.description_outlined,
