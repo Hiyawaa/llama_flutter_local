@@ -91,6 +91,16 @@ class _ChatScreenState extends State<ChatScreen> {
               ],
             ),
             actions: [
+              // New chat
+              IconButton(
+                icon: const Icon(Icons.add_comment_rounded),
+                tooltip: 'New chat',
+                onPressed: provider.messages.isEmpty
+                    ? null
+                    : () {
+                        provider.clearChat();
+                      },
+              ),
               // History
               IconButton(
                 icon: const Icon(Icons.history_rounded),

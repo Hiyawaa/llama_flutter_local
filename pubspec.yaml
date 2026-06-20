@@ -19,6 +19,7 @@ dependencies:
   path: ^1.9.0
   flutter_launcher_icons: ^0.13.1
   url_launcher: ^6.3.1
+  background_downloader: ^9.4.4
 
 flutter_launcher_icons:
   android: true

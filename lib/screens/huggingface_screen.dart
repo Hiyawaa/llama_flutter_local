@@ -1,9 +1,26 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:background_downloader/background_downloader.dart';
 import '../models/app_theme.dart';
 import '../models/chat_provider.dart';
 import '../services/huggingface_service.dart';
+import '../services/download_service.dart';
+
+// ── Per-file download state ───────────────────────────────────────────────────
+
+class _DlState {
+  double progress = 0;
+  TaskStatus status = TaskStatus.enqueued;
+  bool done = false;
+  String? error;
+
+  bool get isRunning =>
+      status == TaskStatus.running || status == TaskStatus.enqueued;
+  bool get isPaused => status == TaskStatus.paused;
+  bool get isFailed => status == TaskStatus.failed || error != null;
+}
+
+// ── Screen ────────────────────────────────────────────────────────────────────
 
 class HuggingFaceScreen extends StatefulWidget {
   const HuggingFaceScreen({super.key});
@@ -20,22 +37,19 @@ class _HuggingFaceScreenState extends State<HuggingFaceScreen> {
   bool _searching = false;
   String? _searchError;
 
-  // Download state
-  final Map<String, DownloadProgress> _downloads = {};
-  final Map<String, StreamSubscription<DownloadProgress>> _subs = {};
+  // filename → download state
+  final Map<String, _DlState> _downloads = {};
 
   @override
   void initState() {
     super.initState();
-    _search('gguf'); // Default: popular GGUF models
+    DownloadService.init();
+    _search('gguf');
   }
 
   @override
   void dispose() {
     _searchCtrl.dispose();
-    for (final s in _subs.values) {
-      s.cancel();
-    }
     _hf.dispose();
     super.dispose();
   }
@@ -53,23 +67,6 @@ class _HuggingFaceScreenState extends State<HuggingFaceScreen> {
     } finally {
       if (mounted) setState(() => _searching = false);
     }
-  }
-
-  void _openModel(HFModel model) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => _ModelFilesScreen(
-          model: model,
-          hf: _hf,
-          downloads: _downloads,
-          subs: _subs,
-          onProgressUpdate: () {
-            if (mounted) setState(() {});
-          },
-        ),
-      ),
-    );
   }
 
   @override
@@ -106,18 +103,15 @@ class _HuggingFaceScreenState extends State<HuggingFaceScreen> {
                 contentPadding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: AppTheme.borderColor),
-                ),
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: AppTheme.borderColor)),
                 enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: AppTheme.borderColor),
-                ),
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: AppTheme.borderColor)),
                 focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide:
-                      const BorderSide(color: AppTheme.accentAmber, width: 1.5),
-                ),
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(
+                        color: AppTheme.accentAmber, width: 1.5)),
               ),
               onSubmitted: _search,
               onChanged: (_) => setState(() {}),
@@ -146,9 +140,24 @@ class _HuggingFaceScreenState extends State<HuggingFaceScreen> {
                     ),
     );
   }
+
+  void _openModel(HFModel model) {
+    Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => _ModelFilesScreen(
+            model: model,
+            hf: _hf,
+            downloads: _downloads,
+            onUpdate: () {
+              if (mounted) setState(() {});
+            },
+          ),
+        ));
+  }
 }
 
-// ── Model card ────────────────────────────────────────────────────────────────
+// ── Model list card ───────────────────────────────────────────────────────────
 
 class _ModelCard extends StatelessWidget {
   final HFModel model;
@@ -173,27 +182,21 @@ class _ModelCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    model.name,
-                    style: const TextStyle(
-                        color: AppTheme.textPrimary,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600),
-                  ),
+                  Text(model.name,
+                      style: const TextStyle(
+                          color: AppTheme.textPrimary,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600)),
                   const SizedBox(height: 2),
-                  Text(
-                    model.author,
-                    style: const TextStyle(
-                        color: AppTheme.textSecondary, fontSize: 12),
-                  ),
+                  Text(model.author,
+                      style: const TextStyle(
+                          color: AppTheme.textSecondary, fontSize: 12)),
                   const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      _Chip('⬇ ${_fmt(model.downloads)}'),
-                      const SizedBox(width: 6),
-                      _Chip('❤ ${model.likes}'),
-                    ],
-                  ),
+                  Row(children: [
+                    _Tag('⬇ ${_fmt(model.downloads)}'),
+                    const SizedBox(width: 6),
+                    _Tag('❤ ${model.likes}'),
+                  ]),
                 ],
               ),
             ),
@@ -212,10 +215,9 @@ class _ModelCard extends StatelessWidget {
   }
 }
 
-class _Chip extends StatelessWidget {
+class _Tag extends StatelessWidget {
   final String label;
-  const _Chip(this.label);
-
+  const _Tag(this.label);
   @override
   Widget build(BuildContext context) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -235,16 +237,14 @@ class _Chip extends StatelessWidget {
 class _ModelFilesScreen extends StatefulWidget {
   final HFModel model;
   final HuggingFaceService hf;
-  final Map<String, DownloadProgress> downloads;
-  final Map<String, StreamSubscription<DownloadProgress>> subs;
-  final VoidCallback onProgressUpdate;
+  final Map<String, _DlState> downloads;
+  final VoidCallback onUpdate;
 
   const _ModelFilesScreen({
     required this.model,
     required this.hf,
     required this.downloads,
-    required this.subs,
-    required this.onProgressUpdate,
+    required this.onUpdate,
   });
 
   @override
@@ -259,6 +259,7 @@ class _ModelFilesScreenState extends State<_ModelFilesScreen> {
   void initState() {
     super.initState();
     _load();
+    _checkExisting();
   }
 
   Future<void> _load() async {
@@ -270,32 +271,67 @@ class _ModelFilesScreenState extends State<_ModelFilesScreen> {
     }
   }
 
-  void _download(HFFile file) {
-    if (widget.subs.containsKey(file.filename)) return;
-
-    final sub = widget.hf.downloadFile(widget.model.id, file).listen(
-      (progress) {
-        widget.downloads[file.filename] = progress;
-        if (mounted) setState(() {});
-        widget.onProgressUpdate();
-
-        if (progress.isDone || progress.hasError) {
-          widget.subs.remove(file.filename);
-        }
-      },
-    );
-    widget.subs[file.filename] = sub;
-    setState(() {});
+  /// Pre-mark any already-downloaded files as done
+  Future<void> _checkExisting() async {
+    final local = await DownloadService.listDownloaded();
+    for (final path in local) {
+      final name = path.split('/').last;
+      if (!widget.downloads.containsKey(name)) {
+        final ds = _DlState();
+        ds.done = true;
+        ds.progress = 1.0;
+        ds.status = TaskStatus.complete;
+        widget.downloads[name] = ds;
+      }
+    }
+    if (mounted) setState(() {});
   }
 
-  void _loadModel(String path, BuildContext ctx) {
-    final provider = ctx.read<ChatProvider>();
-    provider.loadModel(path).then((_) {
-      if (ctx.mounted) {
-        Navigator.popUntil(ctx, (r) => r.isFirst);
-        Navigator.pushNamed(ctx, '/chat');
-      }
-    });
+  void _startDownload(HFFile file) {
+    final url =
+        'https://huggingface.co/${widget.model.id}/resolve/main/${file.rfilename}';
+
+    final ds = _DlState();
+    setState(() => widget.downloads[file.filename] = ds);
+
+    // Fire-and-forget — background_downloader keeps it alive
+    DownloadService.startDownload(
+      url,
+      file.filename,
+      onProgress: (p) {
+        ds.progress = p;
+        ds.status = TaskStatus.running;
+        if (mounted) setState(() {});
+        widget.onUpdate();
+      },
+      onStatus: (status) {
+        ds.status = status;
+        if (status == TaskStatus.complete) {
+          ds.done = true;
+          ds.progress = 1.0;
+          ds.error = null;
+        } else if (status == TaskStatus.failed) {
+          ds.error = 'Download failed — tap retry';
+        } else if (status == TaskStatus.canceled) {
+          widget.downloads.remove(file.filename);
+        }
+        if (mounted) setState(() {});
+        widget.onUpdate();
+      },
+    );
+  }
+
+  void _cancel(HFFile file) {
+    DownloadService.cancel(file.filename);
+    setState(() => widget.downloads.remove(file.filename));
+  }
+
+  Future<void> _loadModel(String path) async {
+    final provider = context.read<ChatProvider>();
+    await provider.loadModel(path);
+    if (!mounted) return;
+    Navigator.popUntil(context, (r) => r.isFirst);
+    Navigator.pushNamed(context, '/chat');
   }
 
   @override
@@ -329,15 +365,22 @@ class _ModelFilesScreenState extends State<_ModelFilesScreen> {
                   : ListView(
                       padding: const EdgeInsets.all(12),
                       children: [
+                        // Active downloads banner
+                        if (widget.downloads.values
+                            .any((d) => d.isRunning && !d.done))
+                          _ActiveDownloadsBanner(),
+
                         const _SectionLabel('GGUF Files'),
                         ..._files!.map((f) => _FileCard(
                               file: f,
-                              progress: widget.downloads[f.filename],
-                              isDownloading:
-                                  widget.subs.containsKey(f.filename),
-                              onDownload: () => _download(f),
-                              onLoad: (path) => _loadModel(path, context),
-                              hf: widget.hf,
+                              dl: widget.downloads[f.filename],
+                              onDownload: () => _startDownload(f),
+                              onCancel: () => _cancel(f),
+                              onLoad: () async {
+                                final path =
+                                    await DownloadService.localPath(f.filename);
+                                _loadModel(path);
+                              },
                             )),
                       ],
                     ),
@@ -345,10 +388,37 @@ class _ModelFilesScreenState extends State<_ModelFilesScreen> {
   }
 }
 
+class _ActiveDownloadsBanner extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) => Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppTheme.accentAmber.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(10),
+          border:
+              Border.all(color: AppTheme.accentAmber.withValues(alpha: 0.3)),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.download_rounded, color: AppTheme.accentAmber, size: 16),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Download continues in the background — '
+                'check the notification bar for progress.',
+                style: TextStyle(
+                    color: AppTheme.accentAmber, fontSize: 12, height: 1.4),
+              ),
+            ),
+          ],
+        ),
+      );
+}
+
 class _SectionLabel extends StatelessWidget {
   final String text;
   const _SectionLabel(this.text);
-
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.only(bottom: 10),
@@ -363,59 +433,26 @@ class _SectionLabel extends StatelessWidget {
 
 // ── File card ─────────────────────────────────────────────────────────────────
 
-class _FileCard extends StatefulWidget {
+class _FileCard extends StatelessWidget {
   final HFFile file;
-  final DownloadProgress? progress;
-  final bool isDownloading;
+  final _DlState? dl;
   final VoidCallback onDownload;
-  final void Function(String) onLoad;
-  final HuggingFaceService hf;
+  final VoidCallback onCancel;
+  final VoidCallback onLoad;
 
   const _FileCard({
     required this.file,
-    required this.progress,
-    required this.isDownloading,
+    required this.dl,
     required this.onDownload,
+    required this.onCancel,
     required this.onLoad,
-    required this.hf,
   });
 
   @override
-  State<_FileCard> createState() => _FileCardState();
-}
-
-class _FileCardState extends State<_FileCard> {
-  bool _localExists = false;
-  String? _localPath;
-
-  @override
-  void initState() {
-    super.initState();
-    _checkLocal();
-  }
-
-  @override
-  void didUpdateWidget(_FileCard old) {
-    super.didUpdateWidget(old);
-    if (widget.progress?.isDone == true) _checkLocal();
-  }
-
-  Future<void> _checkLocal() async {
-    final locals = await widget.hf.localModels();
-    final match =
-        locals.where((p) => p.endsWith(widget.file.filename)).toList();
-    if (mounted) {
-      setState(() {
-        _localExists = match.isNotEmpty;
-        _localPath = match.isNotEmpty ? match.first : null;
-      });
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final prog = widget.progress;
-    final isDone = prog?.isDone == true || _localExists;
+    final isDone = dl?.done == true;
+    final running = dl?.isRunning == true && !isDone;
+    final failed = dl?.isFailed == true;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -425,8 +462,10 @@ class _FileCardState extends State<_FileCard> {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: isDone
-              ? AppTheme.accentGreen.withValues(alpha: 0.3)
-              : AppTheme.borderColor,
+              ? AppTheme.accentGreen.withValues(alpha: 0.35)
+              : running
+                  ? AppTheme.accentAmber.withValues(alpha: 0.35)
+                  : AppTheme.borderColor,
         ),
       ),
       child: Column(
@@ -438,60 +477,73 @@ class _FileCardState extends State<_FileCard> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      widget.file.filename,
-                      style: const TextStyle(
-                          color: AppTheme.textPrimary,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500),
-                    ),
+                    Text(file.filename,
+                        style: const TextStyle(
+                            color: AppTheme.textPrimary,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500)),
                     const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        if (widget.file.quantLabel.isNotEmpty) ...[
-                          _Chip(widget.file.quantLabel),
-                          const SizedBox(width: 6),
-                        ],
-                        _Chip(widget.file.sizeLabel),
+                    Row(children: [
+                      _Tag2(file.sizeLabel, AppTheme.accentAmber),
+                      if (file.quantLabel.isNotEmpty) ...[
+                        const SizedBox(width: 5),
+                        _Tag2(file.quantLabel, AppTheme.accentBlue),
                       ],
-                    ),
+                    ]),
                   ],
                 ),
               ),
               const SizedBox(width: 8),
-              _ActionButton(
+              _ActionBtn(
                 isDone: isDone,
-                isDownloading: widget.isDownloading,
-                hasError: prog?.hasError == true,
-                onDownload: widget.onDownload,
-                onLoad: _localPath != null
-                    ? () => widget.onLoad(_localPath!)
-                    : null,
+                running: running,
+                failed: failed,
+                onDownload: onDownload,
+                onCancel: onCancel,
+                onLoad: onLoad,
               ),
             ],
           ),
+
           // Progress bar
-          if (widget.isDownloading && prog != null && !isDone) ...[
+          if (running) ...[
             const SizedBox(height: 10),
             ClipRRect(
               borderRadius: BorderRadius.circular(4),
               child: LinearProgressIndicator(
-                value: prog.fraction,
+                value: dl!.progress,
+                minHeight: 5,
                 backgroundColor: AppTheme.borderColor,
                 valueColor: const AlwaysStoppedAnimation(AppTheme.accentAmber),
-                minHeight: 4,
               ),
             ),
             const SizedBox(height: 4),
-            Text(
-              '${_fmtBytes(prog.received)} / ${_fmtBytes(prog.total)}'
-              '  (${(prog.fraction * 100).toStringAsFixed(1)}%)',
-              style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('${(dl!.progress * 100).toStringAsFixed(1)}%',
+                    style: const TextStyle(
+                        color: AppTheme.accentAmber, fontSize: 11)),
+                const Text('Downloading...',
+                    style: TextStyle(color: AppTheme.textMuted, fontSize: 10)),
+              ],
             ),
           ],
-          if (prog?.hasError == true) ...[
+
+          if (isDone) ...[
             const SizedBox(height: 6),
-            Text('Error: ${prog!.error}',
+            const Row(children: [
+              Icon(Icons.check_circle_rounded,
+                  color: AppTheme.accentGreen, size: 13),
+              SizedBox(width: 4),
+              Text('Downloaded',
+                  style: TextStyle(color: AppTheme.accentGreen, fontSize: 11)),
+            ]),
+          ],
+
+          if (failed && dl?.error != null) ...[
+            const SizedBox(height: 6),
+            Text(dl!.error!,
                 style:
                     const TextStyle(color: AppTheme.accentRed, fontSize: 11)),
           ],
@@ -499,64 +551,77 @@ class _FileCardState extends State<_FileCard> {
       ),
     );
   }
-
-  String _fmtBytes(int b) {
-    if (b < 1024 * 1024) return '${(b / 1024).toStringAsFixed(1)} KB';
-    if (b < 1024 * 1024 * 1024) {
-      return '${(b / (1024 * 1024)).toStringAsFixed(1)} MB';
-    }
-    return '${(b / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
-  }
 }
 
-class _ActionButton extends StatelessWidget {
-  final bool isDone;
-  final bool isDownloading;
-  final bool hasError;
-  final VoidCallback onDownload;
-  final VoidCallback? onLoad;
+class _Tag2 extends StatelessWidget {
+  final String label;
+  final Color color;
+  const _Tag2(this.label, this.color);
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(5),
+          border: Border.all(color: color.withValues(alpha: 0.3)),
+        ),
+        child: Text(label,
+            style: TextStyle(
+                color: color, fontSize: 10, fontWeight: FontWeight.w600)),
+      );
+}
 
-  const _ActionButton({
+class _ActionBtn extends StatelessWidget {
+  final bool isDone;
+  final bool running;
+  final bool failed;
+  final VoidCallback onDownload;
+  final VoidCallback onCancel;
+  final VoidCallback onLoad;
+  const _ActionBtn({
     required this.isDone,
-    required this.isDownloading,
-    required this.hasError,
+    required this.running,
+    required this.failed,
     required this.onDownload,
+    required this.onCancel,
     required this.onLoad,
   });
 
   @override
   Widget build(BuildContext context) {
-    if (isDownloading) {
-      return const SizedBox(
-        width: 24,
-        height: 24,
-        child: CircularProgressIndicator(
-            strokeWidth: 2, color: AppTheme.accentAmber),
-      );
-    }
-    if (isDone && onLoad != null) {
+    if (isDone) {
       return ElevatedButton(
         onPressed: onLoad,
         style: ElevatedButton.styleFrom(
           backgroundColor: AppTheme.accentGreen,
           foregroundColor: Colors.black,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           minimumSize: Size.zero,
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
         child: const Text('Load',
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+      );
+    }
+    if (running) {
+      return IconButton(
+        icon: const Icon(Icons.cancel_rounded,
+            color: AppTheme.accentRed, size: 22),
+        tooltip: 'Cancel',
+        onPressed: onCancel,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(),
       );
     }
     return IconButton(
-      onPressed: onDownload,
       icon: Icon(
-        hasError ? Icons.refresh_rounded : Icons.download_rounded,
-        color: hasError ? AppTheme.accentRed : AppTheme.accentAmber,
+        failed ? Icons.refresh_rounded : Icons.download_rounded,
+        color: failed ? AppTheme.accentRed : AppTheme.accentAmber,
         size: 22,
       ),
-      tooltip: hasError ? 'Retry' : 'Download',
+      tooltip: failed ? 'Retry' : 'Download',
+      onPressed: onDownload,
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(),
     );
@@ -597,3 +662,5 @@ class _ErrorView extends StatelessWidget {
         ),
       );
 }
+
+// _accentBlue was unused and removed.
