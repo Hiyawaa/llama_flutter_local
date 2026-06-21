@@ -23,7 +23,8 @@ class _DlState {
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 class HuggingFaceScreen extends StatefulWidget {
-  const HuggingFaceScreen({super.key});
+  final String? initialQuery;
+  const HuggingFaceScreen({super.key, this.initialQuery});
 
   @override
   State<HuggingFaceScreen> createState() => _HuggingFaceScreenState();
@@ -44,7 +45,11 @@ class _HuggingFaceScreenState extends State<HuggingFaceScreen> {
   void initState() {
     super.initState();
     DownloadService.init();
-    _search('gguf');
+    final query = widget.initialQuery;
+    if (query != null && query.isNotEmpty) {
+      _searchCtrl.text = query;
+    }
+    _search(query?.isNotEmpty == true ? query! : 'gguf');
   }
 
   @override
@@ -334,8 +339,68 @@ class _ModelFilesScreenState extends State<_ModelFilesScreen> {
     Navigator.pushNamed(context, '/chat');
   }
 
+  /// Before loading the main model file, check whether this repo has a
+  /// vision projector and, if so, whether it's actually been downloaded —
+  /// otherwise the model will load as text-only with no warning, which is
+  /// exactly the confusing "I loaded Qwen2-VL but the image button stayed
+  /// off" situation.
+  Future<void> _loadWithVisionCheck(HFFile mainFile) async {
+    final files = _files ?? [];
+    final mmprojFiles = files.where((f) => f.isMmproj).toList();
+    final path = await DownloadService.localPath(mainFile.filename);
+
+    if (mmprojFiles.isEmpty) {
+      // No vision variant exists for this repo at all — just a text model.
+      await _loadModel(path);
+      return;
+    }
+
+    final mmprojDownloaded =
+        mmprojFiles.any((f) => widget.downloads[f.filename]?.done == true);
+
+    if (mmprojDownloaded) {
+      await _loadModel(path);
+      return;
+    }
+
+    if (!mounted) return;
+    final proceed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.bgSurface,
+        title: const Text('Missing vision file',
+            style: TextStyle(color: AppTheme.textPrimary)),
+        content: Text(
+          'This model supports image understanding, but its mmproj file '
+          '(${mmprojFiles.first.filename}) hasn\'t been downloaded yet.\n\n'
+          "Without it, this will load as a text-only model and the image "
+          "scanner won't be available.",
+          style: const TextStyle(color: AppTheme.textSecondary, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Download mmproj first',
+                style: TextStyle(color: AppTheme.accentGreen)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Load anyway (text-only)',
+                style: TextStyle(color: AppTheme.textSecondary)),
+          ),
+        ],
+      ),
+    );
+    if (proceed == true) await _loadModel(path);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final files = _files ?? [];
+    final hasVisionVariant = files.any((f) => f.isMmproj);
+    final mainFiles = files.where((f) => !f.isMmproj).toList();
+    final mmprojFiles = files.where((f) => f.isMmproj).toList();
+
     return Scaffold(
       backgroundColor: AppTheme.bgBase,
       appBar: AppBar(
@@ -370,22 +435,75 @@ class _ModelFilesScreenState extends State<_ModelFilesScreen> {
                             .any((d) => d.isRunning && !d.done))
                           _ActiveDownloadsBanner(),
 
-                        const _SectionLabel('GGUF Files'),
-                        ..._files!.map((f) => _FileCard(
+                        if (hasVisionVariant) const _VisionRequiredBanner(),
+
+                        const _SectionLabel('Model'),
+                        ...mainFiles.map((f) => _FileCard(
                               file: f,
                               dl: widget.downloads[f.filename],
                               onDownload: () => _startDownload(f),
                               onCancel: () => _cancel(f),
-                              onLoad: () async {
-                                final path =
-                                    await DownloadService.localPath(f.filename);
-                                _loadModel(path);
-                              },
+                              onLoad: () => _loadWithVisionCheck(f),
                             )),
+
+                        if (mmprojFiles.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          const _SectionLabel(
+                              'Vision file (required for images)'),
+                          ...mmprojFiles.map((f) => _FileCard(
+                                file: f,
+                                dl: widget.downloads[f.filename],
+                                isMmproj: true,
+                                onDownload: () => _startDownload(f),
+                                onCancel: () => _cancel(f),
+                                onLoad: () async {
+                                  // mmproj files aren't "loaded" on their own —
+                                  // they get auto-attached when the main model
+                                  // loads. Tapping just confirms it's ready.
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                          'Vision file ready — load the main '
+                                          'model above to enable image scanning'),
+                                    ),
+                                  );
+                                },
+                              )),
+                        ],
                       ],
                     ),
     );
   }
+}
+
+class _VisionRequiredBanner extends StatelessWidget {
+  const _VisionRequiredBanner();
+  @override
+  Widget build(BuildContext context) => Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppTheme.accentGreen.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(10),
+          border:
+              Border.all(color: AppTheme.accentGreen.withValues(alpha: 0.3)),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.visibility_rounded,
+                color: AppTheme.accentGreen, size: 16),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'This model supports images — download BOTH the model file '
+                'and the vision file below for the image scanner to work.',
+                style: TextStyle(
+                    color: AppTheme.accentGreen, fontSize: 12, height: 1.4),
+              ),
+            ),
+          ],
+        ),
+      );
 }
 
 class _ActiveDownloadsBanner extends StatelessWidget {
@@ -436,6 +554,7 @@ class _SectionLabel extends StatelessWidget {
 class _FileCard extends StatelessWidget {
   final HFFile file;
   final _DlState? dl;
+  final bool isMmproj;
   final VoidCallback onDownload;
   final VoidCallback onCancel;
   final VoidCallback onLoad;
@@ -443,6 +562,7 @@ class _FileCard extends StatelessWidget {
   const _FileCard({
     required this.file,
     required this.dl,
+    this.isMmproj = false,
     required this.onDownload,
     required this.onCancel,
     required this.onLoad,
@@ -465,7 +585,9 @@ class _FileCard extends StatelessWidget {
               ? AppTheme.accentGreen.withValues(alpha: 0.35)
               : running
                   ? AppTheme.accentAmber.withValues(alpha: 0.35)
-                  : AppTheme.borderColor,
+                  : isMmproj
+                      ? AppTheme.accentGreen.withValues(alpha: 0.25)
+                      : AppTheme.borderColor,
         ),
       ),
       child: Column(
@@ -483,12 +605,12 @@ class _FileCard extends StatelessWidget {
                             fontSize: 13,
                             fontWeight: FontWeight.w500)),
                     const SizedBox(height: 4),
-                    Row(children: [
+                    Wrap(spacing: 5, runSpacing: 5, children: [
                       _Tag2(file.sizeLabel, AppTheme.accentAmber),
-                      if (file.quantLabel.isNotEmpty) ...[
-                        const SizedBox(width: 5),
+                      if (file.quantLabel.isNotEmpty)
                         _Tag2(file.quantLabel, AppTheme.accentBlue),
-                      ],
+                      if (isMmproj)
+                        _Tag2('Required for vision', AppTheme.accentGreen),
                     ]),
                   ],
                 ),

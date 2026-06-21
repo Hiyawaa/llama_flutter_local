@@ -14,11 +14,13 @@ class ChatMessage {
   String content;
   final DateTime timestamp;
   bool isStreaming;
+  final String? imagePath;
 
   ChatMessage({
     required this.role,
     required this.content,
     this.isStreaming = false,
+    this.imagePath,
     DateTime? timestamp,
   }) : timestamp = timestamp ?? DateTime.now();
 }
@@ -55,6 +57,7 @@ class ChatProvider extends ChangeNotifier {
   LlamaService get llama => _llama;
   bool get isGenerating => _status == ChatStatus.generating;
   bool get isLoadingModel => _status == ChatStatus.loading;
+  bool get isVisionCapable => _llama.isVisionCapable;
   String get systemPrompt => _systemPrompt;
   double get temperature => _temperature;
   int get maxTokens => _maxTokens;
@@ -100,6 +103,14 @@ class ChatProvider extends ChangeNotifier {
     _error = null;
     notifyListeners();
 
+    // Snapshot conversation history BEFORE adding the AI placeholder.
+    // All previous turns are sent so the model can recall earlier topics.
+    final history = _messages
+        .sublist(0, _messages.length - 1) // exclude the just-added user msg
+        .where((m) => m.content.isNotEmpty)
+        .map((m) => {'role': m.role, 'content': m.content})
+        .toList();
+
     final aiMsg =
         ChatMessage(role: 'assistant', content: '', isStreaming: true);
     _messages.add(aiMsg);
@@ -107,6 +118,7 @@ class ChatProvider extends ChangeNotifier {
     try {
       await for (final token in _llama.chat(
         text.trim(),
+        history: history,
         systemPrompt: _systemPrompt,
         temperature: _temperature,
         maxTokens: _maxTokens,
@@ -126,6 +138,65 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
 
     // Auto-save after each assistant response
+    await _autoSave();
+  }
+
+  // ── Image analysis (vision) ─────────────────────────────────────────────────
+  /// Send an image + prompt as a chat turn. Behaves like [sendMessage] but
+  /// attaches [imagePath] to the user turn so a vision-capable model can see
+  /// it. Requires [isVisionCapable] — callers should gate the UI on that
+  /// rather than relying on this throwing.
+  Future<void> sendImageMessage(String imagePath, String text) async {
+    if (text.trim().isEmpty || isGenerating || !_llama.isReady) return;
+    if (!isVisionCapable) {
+      _error = 'Loaded model has no vision support';
+      notifyListeners();
+      return;
+    }
+
+    if (_sessionId == null) {
+      _sessionId = DateTime.now().millisecondsSinceEpoch.toString();
+      _sessionStart = DateTime.now();
+    }
+
+    _messages.add(ChatMessage(
+      role: 'user',
+      content: text.trim(),
+      imagePath: imagePath,
+    ));
+    _status = ChatStatus.generating;
+    _error = null;
+    notifyListeners();
+
+    final history = _messages
+        .sublist(0, _messages.length - 1)
+        .where((m) => m.content.isNotEmpty)
+        .map((m) => {'role': m.role, 'content': m.content})
+        .toList();
+
+    final aiMsg =
+        ChatMessage(role: 'assistant', content: '', isStreaming: true);
+    _messages.add(aiMsg);
+
+    try {
+      await for (final token in _llama.chatWithImage(
+        imagePath,
+        text.trim(),
+        history: history,
+        systemPrompt: _systemPrompt,
+      )) {
+        aiMsg.content += token;
+        notifyListeners();
+      }
+    } catch (e) {
+      aiMsg.content = 'Error: $e';
+      _error = e.toString();
+    }
+
+    aiMsg.isStreaming = false;
+    _status = ChatStatus.idle;
+    notifyListeners();
+
     await _autoSave();
   }
 
@@ -163,6 +234,7 @@ class ChatProvider extends ChangeNotifier {
                 role: m.role,
                 content: m.content,
                 timestamp: m.timestamp,
+                imagePath: m.imagePath,
               ))
           .toList(),
     );
@@ -179,6 +251,7 @@ class ChatProvider extends ChangeNotifier {
         role: m.role,
         content: m.content,
         timestamp: m.timestamp,
+        imagePath: m.imagePath,
       ));
     }
     notifyListeners();

@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
@@ -90,25 +91,53 @@ class ChatBubble extends StatelessWidget {
           ),
           child: message.content.isEmpty && message.isStreaming
               ? const _TypingDots()
-              : isUser
-                  ? SelectableText(
-                      message.content,
-                      style: const TextStyle(
-                          color: AppTheme.textPrimary,
-                          fontSize: 14.5,
-                          height: 1.55),
-                    )
-                  : message.isStreaming
-                      // Plain text while streaming — no partial LaTeX/code bugs
-                      ? SelectableText(
-                          message.content,
-                          style: const TextStyle(
-                              color: AppTheme.textPrimary,
-                              fontSize: 14.5,
-                              height: 1.6),
-                        )
-                      // Full render once complete
-                      : _FullRender(content: message.content),
+              : Column(
+                  crossAxisAlignment: isUser
+                      ? CrossAxisAlignment.end
+                      : CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (message.imagePath != null) ...[
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: Image.file(
+                          File(message.imagePath!),
+                          width: 180,
+                          height: 180,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            width: 180,
+                            height: 120,
+                            alignment: Alignment.center,
+                            color: AppTheme.bgBase,
+                            child: const Icon(Icons.broken_image_outlined,
+                                color: AppTheme.textMuted),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                    isUser
+                        ? SelectableText(
+                            message.content,
+                            style: const TextStyle(
+                                color: AppTheme.textPrimary,
+                                fontSize: 14.5,
+                                height: 1.55),
+                          )
+                        : message.isStreaming
+                            // Plain text while streaming — no partial LaTeX/code bugs
+                            ? SelectableText(
+                                message.content,
+                                style: const TextStyle(
+                                    color: AppTheme.textPrimary,
+                                    fontSize: 14.5,
+                                    height: 1.6),
+                              )
+                            // Full render once complete
+                            : _FullRender(content: message.content),
+                  ],
+                ),
         ),
       );
 

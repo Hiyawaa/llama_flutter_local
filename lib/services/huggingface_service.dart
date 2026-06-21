@@ -45,6 +45,11 @@ class HFFile {
 
   bool get isGguf => filename.toLowerCase().endsWith('.gguf');
 
+  /// True if this is a vision projector file rather than a main model — these
+  /// always need to be downloaded alongside the matching main model for
+  /// image support to work.
+  bool get isMmproj => filename.toLowerCase().contains('mmproj');
+
   String get sizeLabel {
     if (size <= 0) {
       return 'Unknown size';

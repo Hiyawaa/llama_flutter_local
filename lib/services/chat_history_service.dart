@@ -9,23 +9,27 @@ class SavedMessage {
   final String role;
   final String content;
   final DateTime timestamp;
+  final String? imagePath;
 
   SavedMessage({
     required this.role,
     required this.content,
     required this.timestamp,
+    this.imagePath,
   });
 
   Map<String, dynamic> toJson() => {
         'role': role,
         'content': content,
         'timestamp': timestamp.toIso8601String(),
+        if (imagePath != null) 'imagePath': imagePath,
       };
 
   factory SavedMessage.fromJson(Map<String, dynamic> j) => SavedMessage(
         role: j['role'] as String,
         content: j['content'] as String,
         timestamp: DateTime.parse(j['timestamp'] as String),
+        imagePath: j['imagePath'] as String?,
       );
 }
 

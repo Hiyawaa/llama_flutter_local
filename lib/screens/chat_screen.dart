@@ -7,6 +7,7 @@ import '../widgets/chat_bubble.dart';
 import '../widgets/ram_indicator.dart';
 import 'settings_screen.dart';
 import 'history_screen.dart';
+import 'image_scanner_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -182,6 +183,49 @@ class _ChatScreenState extends State<ChatScreen> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
+              // ── Image Scanner button ──────────────────────────────────────
+              GestureDetector(
+                onTap: () {
+                  if (!provider.isVisionCapable) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content:
+                            Text("This model can't see images — load a vision "
+                                "model (e.g. Qwen2-VL-2B) to use the scanner"),
+                        duration: Duration(seconds: 3),
+                      ),
+                    );
+                    return;
+                  }
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const ImageScannerScreen(),
+                    ),
+                  );
+                },
+                child: Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: AppTheme.bgSurface,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: provider.isVisionCapable
+                          ? AppTheme.borderColor
+                          : AppTheme.borderColor.withValues(alpha: 0.4),
+                    ),
+                  ),
+                  child: Icon(
+                    Icons.add_rounded,
+                    color: provider.isVisionCapable
+                        ? AppTheme.textSecondary
+                        : AppTheme.textMuted.withValues(alpha: 0.5),
+                    size: 22,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
               // Text input
               Expanded(
                 child: Container(
