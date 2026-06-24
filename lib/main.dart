@@ -11,10 +11,8 @@ import 'screens/image_scanner_screen.dart';
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(
-    MultiProvider(
-      providers: [
-        ChangeNotifierProvider(create: (_) => ChatProvider()),
-      ],
+    ChangeNotifierProvider(
+      create: (_) => ChatProvider(),
       child: const LlamaDartApp(),
     ),
   );

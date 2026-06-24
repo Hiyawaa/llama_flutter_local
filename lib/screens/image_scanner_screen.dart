@@ -5,12 +5,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../models/app_theme.dart';
 import '../models/chat_provider.dart';
+import '../services/ml_kit_service.dart';
 
-/// Image Scanner — lets the user attach a photo and ask the currently
-/// loaded model about it. Uses whatever model is already loaded in
-/// [ChatProvider]; there is no separate model-loading step here. If the
-/// loaded model has no vision projector, this screen isn't reachable (the
-/// "+" button in chat is disabled in that case) but we still guard for it.
 class ImageScannerScreen extends StatefulWidget {
   const ImageScannerScreen({super.key});
 
@@ -18,167 +14,209 @@ class ImageScannerScreen extends StatefulWidget {
   State<ImageScannerScreen> createState() => _ImageScannerScreenState();
 }
 
-class _ImageScannerScreenState extends State<ImageScannerScreen> {
+class _ImageScannerScreenState extends State<ImageScannerScreen>
+    with SingleTickerProviderStateMixin {
   final _picker = ImagePicker();
-  final _inputCtrl = TextEditingController();
-  final _scrollCtrl = ScrollController();
-  bool _hasText = false;
+  final _mlKit = MlKitService();
 
-  // The image currently staged for the next message. Once sent, it travels
-  // with that ChatMessage and shows up in the normal chat history.
-  String? _stagedImagePath;
+  String? _imagePath;
+  MlKitResult? _result;
+  bool _scanning = false;
 
-  // Quick-prompt suggestions
-  static const _suggestions = [
-    'Describe this image in detail',
-    'What text can you read in this image?',
-    'What objects are in this image?',
-    'Explain what is happening in this image',
-    'What emotions does this image convey?',
-    'Is there any math or equations? Solve them',
-    'Translate any text visible in this image',
-    'What is the main subject of this image?',
-  ];
+  // Toggles for which analyses to run
+  bool _doOcr = true;
+  bool _doLabeling = true;
+  bool _doBarcode = true;
+
+  late TabController _tabCtrl;
 
   @override
   void initState() {
     super.initState();
-    _inputCtrl.addListener(() {
-      final v = _inputCtrl.text.trim().isNotEmpty;
-      if (v != _hasText) setState(() => _hasText = v);
-    });
+    _tabCtrl = TabController(length: 3, vsync: this);
   }
 
   @override
   void dispose() {
-    _inputCtrl.dispose();
-    _scrollCtrl.dispose();
+    _tabCtrl.dispose();
+    _mlKit.dispose();
     super.dispose();
   }
 
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollCtrl.hasClients) {
-        _scrollCtrl.animateTo(
-          _scrollCtrl.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
+  // ── Image picking ─────────────────────────────────────────────────────────
+
+  Future<void> _pickCamera() async {
+    final f =
+        await _picker.pickImage(source: ImageSource.camera, imageQuality: 90);
+    if (f != null) await _analyze(f.path);
+  }
+
+  Future<void> _pickGallery() async {
+    final f =
+        await _picker.pickImage(source: ImageSource.gallery, imageQuality: 90);
+    if (f != null) await _analyze(f.path);
+  }
+
+  Future<void> _analyze(String path) async {
+    setState(() {
+      _imagePath = path;
+      _result = null;
+      _scanning = true;
+    });
+
+    final result = await _mlKit.analyzeImage(
+      path,
+      doOcr: _doOcr,
+      doLabeling: _doLabeling,
+      doBarcode: _doBarcode,
+    );
+
+    if (mounted) {
+      setState(() {
+        _result = result;
+        _scanning = false;
+      });
+      if (!result.isEmpty) _autoAnalyze(result);
+    }
+  }
+
+  // ── Content-type detection ────────────────────────────────────────────────
+
+  bool _looksLikeMath(String text) {
+    return RegExp(
+      r'[0-9]+[\s]*[+\-*/^=]|'
+      r'[0-9]{1,3}(,[0-9]{3})+|'
+      r'[0-9]+\.[0-9]+|'
+      r'%|RATE|INTEREST|COMPOUND|'
+      r'COST|PRICE|TOTAL|SUM|BAC|'
+      r'LOG|SIN|COS|TAN|'
+      r'[A-Z]{2,}\s*=\s*[0-9]',
+      caseSensitive: false,
+    ).hasMatch(text);
+  }
+
+  bool _looksLikeExamProblem(String text) {
+    return RegExp(
+      r'BOARD|EXAM|[0-9]{4}|PROBLEM|FIND|COMPUTE|DETERMINE|CALCULATE|'
+      r'CE BOARD|ME BOARD|EE BOARD|ECE BOARD|GIVEN|REQUIRED|SOLUTION',
+      caseSensitive: false,
+    ).hasMatch(text);
+  }
+
+  String _buildPrompt(MlKitResult r) {
+    if (r.hasBarcodes) {
+      final val = r.barcodes.first;
+      if (val.startsWith('http')) return 'What is this URL? $val';
+      return 'What does this code mean? $val';
+    }
+
+    final text = r.recognizedText ?? '';
+
+    if (r.hasLabels && !r.hasText) {
+      return 'Image shows: \${r.labels.take(4).join(", ")}. Describe briefly.';
+    }
+    if (text.isEmpty) {
+      return 'Image labels: \${r.labels.take(4).join(", ")}. What is this?';
+    }
+
+    final isExam = _looksLikeExamProblem(text);
+    final isMath = _looksLikeMath(text);
+    final isNonEng = text.runes.any((c) => c > 127);
+
+    if (isExam || isMath) {
+      return 'The following is OCR text from a photo of an exam problem. '
+          'The text may have OCR errors (wrong letters, missing spaces, '
+          'garbled numbers). First reconstruct the most likely intended '
+          'problem, then solve it step by step.\n\nOCR text:\n$text';
+    }
+    if (isNonEng) {
+      return 'OCR text (may have errors). Translate to English '
+          'and fix any obvious OCR mistakes:\n$text';
+    }
+    return 'OCR text (may have errors). Clean up and summarize:\n$text';
+  }
+
+  void _autoAnalyze(MlKitResult result) {
+    final provider = context.read<ChatProvider>();
+    if (!provider.llama.isReady) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Load a model on the home screen to auto-analyze'),
+            behavior: SnackBarBehavior.floating,
+            duration: Duration(seconds: 3),
+          ),
         );
       }
-    });
-  }
-
-  Future<void> _pickFromCamera() async {
-    final xfile = await _picker.pickImage(
-      source: ImageSource.camera,
-      imageQuality: 85,
-    );
-    if (xfile == null) return;
-    if (mounted) setState(() => _stagedImagePath = xfile.path);
-  }
-
-  Future<void> _pickFromGallery() async {
-    final xfile = await _picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 85,
-    );
-    if (xfile == null) return;
-    if (mounted) setState(() => _stagedImagePath = xfile.path);
-  }
-
-  void _clearStagedImage() => setState(() => _stagedImagePath = null);
-
-  Future<void> _send(ChatProvider provider) async {
-    final text = _inputCtrl.text.trim();
-    if (text.isEmpty || provider.isGenerating) return;
-    _inputCtrl.clear();
-
-    if (_stagedImagePath != null) {
-      final imagePath = _stagedImagePath!;
-      // Clear the staged image immediately — it now travels with the
-      // message itself, so the input area returns to its normal state for
-      // the next (text-only, same-context) follow-up.
-      setState(() => _stagedImagePath = null);
-      await provider.sendImageMessage(imagePath, text);
-    } else {
-      // Text-only follow-up about a previously sent image — the model still
-      // has it in context via conversation history.
-      await provider.sendMessage(text);
+      return;
     }
-    _scrollToBottom();
+    final prompt = _buildPrompt(result);
+    provider.sendMessage(prompt);
+    Navigator.popUntil(context, (r) => r.isFirst);
+    Navigator.pushNamed(context, '/chat');
+  }
+
+  // ── Manual send button (fallback) ─────────────────────────────────────────
+
+  void _sendToChat(BuildContext ctx) {
+    if (_result == null) return;
+    final provider = ctx.read<ChatProvider>();
+    if (!provider.llama.isReady) {
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        const SnackBar(
+          content: Text('Load a text model to analyze results'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    provider.sendMessage(_buildPrompt(_result!));
+    Navigator.popUntil(ctx, (r) => r.isFirst);
+    Navigator.pushNamed(ctx, '/chat');
   }
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<ChatProvider>(
-      builder: (context, provider, _) {
-        if (provider.messages.isNotEmpty) _scrollToBottom();
-
-        final canScan = provider.llama.isReady && provider.isVisionCapable;
-
-        return Scaffold(
-          backgroundColor: AppTheme.bgBase,
-          appBar: AppBar(
-            title: const Text('🔍 Image Scanner'),
-            actions: [
-              if (_stagedImagePath != null)
-                IconButton(
-                  icon: const Icon(Icons.clear_rounded),
-                  tooltip: 'Remove image',
-                  onPressed: _clearStagedImage,
-                ),
-            ],
+    return Scaffold(
+      backgroundColor: AppTheme.bgBase,
+      appBar: AppBar(
+        title: const Text('🔍 Image Scanner'),
+        actions: [
+          // Settings toggle
+          IconButton(
+            icon: const Icon(Icons.tune_rounded),
+            tooltip: 'Scan options',
+            onPressed: () => _showOptions(context),
           ),
-          body: Column(
-            children: [
-              // ── Not capable banner ────────────────────────────────────
-              if (!canScan) _NotCapableBanner(provider: provider),
-
-              // ── Main content ──────────────────────────────────────────
-              Expanded(
-                child: !canScan
-                    ? const SizedBox.shrink()
-                    : _stagedImagePath == null && provider.messages.isEmpty
-                        ? _ImagePickerArea(
-                            onCamera: _pickFromCamera,
-                            onGallery: _pickFromGallery,
-                          )
-                        : _ChatArea(
-                            provider: provider,
-                            scrollCtrl: _scrollCtrl,
-                            stagedImagePath: _stagedImagePath,
-                            onClearStaged: _clearStagedImage,
-                            suggestions: _suggestions,
-                            onSuggestion: (s) {
-                              _inputCtrl.text = s;
-                              _send(provider);
-                            },
-                            onPickNew: () => _showImageOptions(context),
-                          ),
-              ),
-
-              // ── Input bar ──────────────────────────────────────────────
-              if (canScan &&
-                  (_stagedImagePath != null || provider.messages.isNotEmpty))
-                _InputBar(
-                  ctrl: _inputCtrl,
-                  hasText: _hasText,
-                  isGenerating: provider.isGenerating,
-                  hasStagedImage: _stagedImagePath != null,
-                  onAttach: () => _showImageOptions(context),
-                  onSend: () => _send(provider),
-                  onStop: provider.stopGeneration,
-                ),
-            ],
-          ),
-        );
-      },
+          if (_imagePath != null)
+            IconButton(
+              icon: const Icon(Icons.refresh_rounded),
+              tooltip: 'New scan',
+              onPressed: () => setState(() {
+                _imagePath = null;
+                _result = null;
+              }),
+            ),
+        ],
+      ),
+      body: _imagePath == null
+          ? _PickerArea(onCamera: _pickCamera, onGallery: _pickGallery)
+          : _ScanArea(
+              imagePath: _imagePath!,
+              result: _result,
+              scanning: _scanning,
+              tabCtrl: _tabCtrl,
+              onRescan: () => _analyze(_imagePath!),
+              onNewImage: () => _showPickSheet(context),
+              onSendToChat: () => _sendToChat(context),
+            ),
     );
   }
 
-  void _showImageOptions(BuildContext context) {
+  void _showPickSheet(BuildContext ctx) {
     showModalBottomSheet(
-      context: context,
+      context: ctx,
       backgroundColor: AppTheme.bgSurface,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
@@ -193,21 +231,25 @@ class _ImageScannerScreenState extends State<ImageScannerScreen> {
                 decoration: BoxDecoration(
                     color: AppTheme.textMuted,
                     borderRadius: BorderRadius.circular(2))),
-            const SizedBox(height: 16),
-            _SheetOption(
-              icon: Icons.camera_alt_rounded,
-              label: 'Take photo',
+            const SizedBox(height: 12),
+            ListTile(
+              leading: const Icon(Icons.camera_alt_rounded,
+                  color: AppTheme.accentAmber),
+              title: const Text('Take photo',
+                  style: TextStyle(color: AppTheme.textPrimary)),
               onTap: () {
-                Navigator.pop(context);
-                _pickFromCamera();
+                Navigator.pop(ctx);
+                _pickCamera();
               },
             ),
-            _SheetOption(
-              icon: Icons.photo_library_rounded,
-              label: 'Choose from gallery',
+            ListTile(
+              leading: const Icon(Icons.photo_library_rounded,
+                  color: AppTheme.accentGreen),
+              title: const Text('Choose from gallery',
+                  style: TextStyle(color: AppTheme.textPrimary)),
               onTap: () {
-                Navigator.pop(context);
-                _pickFromGallery();
+                Navigator.pop(ctx);
+                _pickGallery();
               },
             ),
             const SizedBox(height: 8),
@@ -216,116 +258,140 @@ class _ImageScannerScreenState extends State<ImageScannerScreen> {
       ),
     );
   }
-}
 
-// ── Not capable banner ────────────────────────────────────────────────────────
-
-class _NotCapableBanner extends StatelessWidget {
-  final ChatProvider provider;
-  const _NotCapableBanner({required this.provider});
-
-  @override
-  Widget build(BuildContext context) {
-    final noModel = !provider.llama.isReady;
-    final message = noModel
-        ? 'No model loaded — go back and load a model first'
-        : "This model can't see images — load a vision model "
-            "(e.g. Qwen2-VL-2B) from the model picker";
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      color: AppTheme.bgSurface,
-      child: Row(
-        children: [
-          const Icon(Icons.info_outline_rounded,
-              color: AppTheme.accentAmber, size: 16),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              message,
-              style:
-                  const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+  void _showOptions(BuildContext ctx) {
+    showModalBottomSheet(
+      context: ctx,
+      backgroundColor: AppTheme.bgSurface,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (_) => StatefulBuilder(
+        builder: (ctx2, setInner) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('SCAN OPTIONS',
+                    style: TextStyle(
+                        color: AppTheme.accentAmber,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.2)),
+                const SizedBox(height: 12),
+                _ToggleRow(
+                  icon: Icons.text_fields_rounded,
+                  label: 'Text Recognition (OCR)',
+                  value: _doOcr,
+                  onChanged: (v) {
+                    setInner(() => _doOcr = v);
+                    setState(() => _doOcr = v);
+                  },
+                ),
+                _ToggleRow(
+                  icon: Icons.label_outline_rounded,
+                  label: 'Image Labeling',
+                  value: _doLabeling,
+                  onChanged: (v) {
+                    setInner(() => _doLabeling = v);
+                    setState(() => _doLabeling = v);
+                  },
+                ),
+                _ToggleRow(
+                  icon: Icons.qr_code_scanner_rounded,
+                  label: 'Barcode / QR Scanning',
+                  value: _doBarcode,
+                  onChanged: (v) {
+                    setInner(() => _doBarcode = v);
+                    setState(() => _doBarcode = v);
+                  },
+                ),
+                const SizedBox(height: 8),
+              ],
             ),
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            style: TextButton.styleFrom(padding: EdgeInsets.zero),
-            child: const Text('Go back',
-                style: TextStyle(
-                    color: AppTheme.accentAmber,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600)),
-          ),
-        ],
+        ),
       ),
     );
   }
 }
 
-// ── Image picker area ─────────────────────────────────────────────────────────
-// Wrapped in a scroll view so smaller screens never overflow — this was the
-// cause of the "BOTTOM OVERFLOWED BY N PIXELS" hazard-stripe bug.
+// ── Picker area ───────────────────────────────────────────────────────────────
 
-class _ImagePickerArea extends StatelessWidget {
+class _PickerArea extends StatelessWidget {
   final VoidCallback onCamera;
   final VoidCallback onGallery;
-  const _ImagePickerArea({required this.onCamera, required this.onGallery});
+  const _PickerArea({required this.onCamera, required this.onGallery});
 
   @override
-  Widget build(BuildContext context) => SingleChildScrollView(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 100,
-              height: 100,
-              decoration: BoxDecoration(
-                color: AppTheme.bgSurface,
-                shape: BoxShape.circle,
-                border: Border.all(color: AppTheme.borderColor),
+  Widget build(BuildContext context) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 100,
+                height: 100,
+                decoration: BoxDecoration(
+                  color: AppTheme.bgSurface,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: AppTheme.borderColor),
+                ),
+                child: const Icon(Icons.document_scanner_rounded,
+                    size: 44, color: AppTheme.accentAmber),
               ),
-              child: const Icon(Icons.image_search_rounded,
-                  size: 44, color: AppTheme.textMuted),
-            ),
-            const SizedBox(height: 24),
-            const Text('Scan an image with AI',
+              const SizedBox(height: 24),
+              const Text('Image Scanner',
+                  style: TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              const Text(
+                'Extract text, identify objects\nand scan QR/barcodes — fully offline',
+                textAlign: TextAlign.center,
                 style: TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            const Text(
-              'Take a photo or pick from gallery\nAsk anything about the image',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                  color: AppTheme.textSecondary, fontSize: 13, height: 1.5),
-            ),
-            const SizedBox(height: 32),
-            Row(
-              children: [
-                Expanded(
-                  child: _BigBtn(
+                    color: AppTheme.textSecondary, fontSize: 13, height: 1.5),
+              ),
+              const SizedBox(height: 32),
+              Row(
+                children: [
+                  Expanded(
+                      child: _BigBtn(
                     icon: Icons.camera_alt_rounded,
                     label: 'Camera',
                     color: AppTheme.accentAmber,
                     onTap: onCamera,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _BigBtn(
+                  )),
+                  const SizedBox(width: 12),
+                  Expanded(
+                      child: _BigBtn(
                     icon: Icons.photo_library_rounded,
                     label: 'Gallery',
                     color: AppTheme.accentGreen,
                     onTap: onGallery,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 32),
-            const _UseCasesBox(),
-          ],
+                  )),
+                ],
+              ),
+              const SizedBox(height: 28),
+              // Feature chips
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                alignment: WrapAlignment.center,
+                children: const [
+                  _FeatureChip('📝 OCR Text'),
+                  _FeatureChip('🏷 Object Labels'),
+                  _FeatureChip('📦 QR & Barcodes'),
+                  _FeatureChip('✈️ Offline'),
+                  _FeatureChip('⚡ Fast'),
+                  _FeatureChip('🔒 Private'),
+                ],
+              ),
+            ],
+          ),
         ),
       );
 }
@@ -345,7 +411,7 @@ class _BigBtn extends StatelessWidget {
   Widget build(BuildContext context) => GestureDetector(
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 16),
+          padding: const EdgeInsets.symmetric(vertical: 18),
           decoration: BoxDecoration(
             color: color.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(14),
@@ -364,478 +430,544 @@ class _BigBtn extends StatelessWidget {
       );
 }
 
-class _UseCasesBox extends StatelessWidget {
-  const _UseCasesBox();
+class _FeatureChip extends StatelessWidget {
+  final String label;
+  const _FeatureChip(this.label);
 
   @override
   Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
           color: AppTheme.bgSurface,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(20),
           border: Border.all(color: AppTheme.borderColor),
         ),
-        child: const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('💡 What you can do',
-                style: TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600)),
-            SizedBox(height: 8),
-            Text(
-              '• Read and solve math equations in photos\n'
-              '• Translate text from images\n'
-              '• Describe scenes, objects, people\n'
-              '• Extract text (OCR-like)\n'
-              '• Analyze charts and diagrams\n'
-              '• Ask follow-up questions about the image',
-              style: TextStyle(
-                  color: AppTheme.textSecondary, fontSize: 12, height: 1.6),
-            ),
-          ],
-        ),
+        child: Text(label,
+            style:
+                const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
       );
 }
 
-// ── Chat area with image ──────────────────────────────────────────────────────
+// ── Scan result area ──────────────────────────────────────────────────────────
 
-class _ChatArea extends StatelessWidget {
-  final ChatProvider provider;
-  final ScrollController scrollCtrl;
-  final String? stagedImagePath;
-  final VoidCallback onClearStaged;
-  final List<String> suggestions;
-  final void Function(String) onSuggestion;
-  final VoidCallback onPickNew;
+class _ScanArea extends StatelessWidget {
+  final String imagePath;
+  final MlKitResult? result;
+  final bool scanning;
+  final TabController tabCtrl;
+  final VoidCallback onRescan;
+  final VoidCallback onNewImage;
+  final VoidCallback onSendToChat;
 
-  const _ChatArea({
-    required this.provider,
-    required this.scrollCtrl,
-    required this.stagedImagePath,
-    required this.onClearStaged,
-    required this.suggestions,
-    required this.onSuggestion,
-    required this.onPickNew,
+  const _ScanArea({
+    required this.imagePath,
+    required this.result,
+    required this.scanning,
+    required this.tabCtrl,
+    required this.onRescan,
+    required this.onNewImage,
+    required this.onSendToChat,
   });
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      controller: scrollCtrl,
-      padding: const EdgeInsets.all(12),
+    return Column(
       children: [
-        // Staged (not-yet-sent) image preview
-        if (stagedImagePath != null) ...[
-          _ImagePreview(path: stagedImagePath!, onChange: onClearStaged),
-          const SizedBox(height: 12),
-        ],
+        // Image preview
+        Stack(
+          children: [
+            SizedBox(
+              width: double.infinity,
+              height: 200,
+              child: Image.file(File(imagePath), fit: BoxFit.cover),
+            ),
+            // Scanning overlay
+            if (scanning)
+              Container(
+                width: double.infinity,
+                height: 200,
+                color: Colors.black54,
+                child: const Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    CircularProgressIndicator(color: AppTheme.accentAmber),
+                    SizedBox(height: 12),
+                    Text('Scanning image...',
+                        style: TextStyle(color: Colors.white, fontSize: 14)),
+                  ],
+                ),
+              ),
+            // Action buttons overlay
+            Positioned(
+              bottom: 8,
+              right: 8,
+              child: Row(
+                children: [
+                  _ImgBtn(
+                      icon: Icons.swap_horiz_rounded,
+                      tooltip: 'New image',
+                      onTap: onNewImage),
+                  const SizedBox(width: 6),
+                  _ImgBtn(
+                      icon: Icons.refresh_rounded,
+                      tooltip: 'Re-scan',
+                      onTap: onRescan),
+                ],
+              ),
+            ),
+          ],
+        ),
 
-        // Suggestions (only when there's a staged image and no messages yet)
-        if (stagedImagePath != null && provider.messages.isEmpty) ...[
-          const Text('Quick prompts',
-              style: TextStyle(
-                  color: AppTheme.textMuted,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.8)),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: suggestions
-                .map((s) => GestureDetector(
-                      onTap: () => onSuggestion(s),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: AppTheme.bgSurface,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: AppTheme.borderColor),
-                        ),
-                        child: Text(s,
-                            style: const TextStyle(
-                                color: AppTheme.textSecondary, fontSize: 12)),
+        // Speed badge
+        if (result != null && !scanning)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            color: AppTheme.bgSurface,
+            child: Row(
+              children: [
+                const Icon(Icons.bolt_rounded,
+                    color: AppTheme.accentAmber, size: 14),
+                const SizedBox(width: 4),
+                Text(
+                  'Scanned in ${result!.duration.inMilliseconds}ms  •  '
+                  '${_summary(result!)}',
+                  style: const TextStyle(
+                      color: AppTheme.textSecondary, fontSize: 11),
+                ),
+                const Spacer(),
+                if (!result!.isEmpty)
+                  GestureDetector(
+                    onTap: onSendToChat,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppTheme.accentGreen.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                            color: AppTheme.accentGreen.withValues(alpha: 0.4)),
                       ),
-                    ))
-                .toList(),
-          ),
-          const SizedBox(height: 16),
-        ],
-
-        // Messages — reuses the same bubble style as the main chat screen's
-        // model, just rendered locally here for the scanner's own message
-        // list view (provider.messages already includes image attachments).
-        ...provider.messages.map((m) => _ScannerBubble(message: m)),
-
-        if (provider.messages.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Center(
-            child: TextButton.icon(
-              onPressed: onPickNew,
-              icon: const Icon(Icons.swap_horiz_rounded,
-                  size: 16, color: AppTheme.accentGreen),
-              label: const Text('Scan a different image',
-                  style: TextStyle(
-                      color: AppTheme.accentGreen,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600)),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.chat_bubble_outline_rounded,
+                              color: AppTheme.accentGreen, size: 12),
+                          SizedBox(width: 4),
+                          Text('Send to chat',
+                              style: TextStyle(
+                                  color: AppTheme.accentGreen,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
-        ],
+
+        // Tab bar
+        Container(
+          color: AppTheme.bgSurface,
+          child: TabBar(
+            controller: tabCtrl,
+            labelColor: AppTheme.accentAmber,
+            unselectedLabelColor: AppTheme.textMuted,
+            indicatorColor: AppTheme.accentAmber,
+            indicatorSize: TabBarIndicatorSize.label,
+            tabs: [
+              Tab(
+                  text:
+                      'Text${_badge(result?.recognizedText?.isNotEmpty == true)}'),
+              Tab(text: 'Labels${_badge(result?.hasLabels == true)}'),
+              Tab(text: 'QR/Bar${_badge(result?.hasBarcodes == true)}'),
+            ],
+          ),
+        ),
+
+        // Tab views
+        Expanded(
+          child: scanning
+              ? const Center(
+                  child: CircularProgressIndicator(color: AppTheme.accentAmber))
+              : result == null
+                  ? const Center(
+                      child: Text('Scan an image above',
+                          style: TextStyle(color: AppTheme.textMuted)))
+                  : TabBarView(
+                      controller: tabCtrl,
+                      children: [
+                        _TextTab(result: result!),
+                        _LabelsTab(result: result!),
+                        _BarcodesTab(result: result!),
+                      ],
+                    ),
+        ),
+      ],
+    );
+  }
+
+  String _badge(bool has) => has ? ' ✓' : '';
+
+  String _summary(MlKitResult r) {
+    final parts = <String>[];
+    if (r.hasText) parts.add('text found');
+    if (r.hasLabels) parts.add('${r.labels.length} labels');
+    if (r.hasBarcodes) parts.add('${r.barcodes.length} code(s)');
+    if (r.isEmpty) parts.add('nothing detected');
+    return parts.join(' · ');
+  }
+}
+
+class _ImgBtn extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+  const _ImgBtn(
+      {required this.icon, required this.tooltip, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.6),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(icon, color: Colors.white, size: 18),
+        ),
+      );
+}
+
+// ── Text tab ──────────────────────────────────────────────────────────────────
+
+class _TextTab extends StatefulWidget {
+  final MlKitResult result;
+  const _TextTab({required this.result});
+
+  @override
+  State<_TextTab> createState() => _TextTabState();
+}
+
+class _TextTabState extends State<_TextTab> {
+  bool _copied = false;
+
+  Future<void> _copy() async {
+    await Clipboard.setData(
+        ClipboardData(text: widget.result.recognizedText ?? ''));
+    setState(() => _copied = true);
+    await Future.delayed(const Duration(seconds: 2));
+    if (mounted) setState(() => _copied = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.result.hasText) {
+      return const _EmptyTab(
+        icon: Icons.text_fields_rounded,
+        message: 'No text detected',
+        hint: 'Make sure text is clear, well-lit and in focus',
+      );
+    }
+    return Column(
+      children: [
+        // Toolbar
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: AppTheme.borderColor)),
+          ),
+          child: Row(
+            children: [
+              Text(
+                '${widget.result.recognizedText!.split('\n').length} lines',
+                style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+              ),
+              const Spacer(),
+              GestureDetector(
+                onTap: _copy,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                  decoration: BoxDecoration(
+                    color:
+                        (_copied ? AppTheme.accentGreen : AppTheme.accentAmber)
+                            .withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: (_copied
+                              ? AppTheme.accentGreen
+                              : AppTheme.accentAmber)
+                          .withValues(alpha: 0.4),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _copied ? Icons.check_rounded : Icons.copy_rounded,
+                        size: 13,
+                        color: _copied
+                            ? AppTheme.accentGreen
+                            : AppTheme.accentAmber,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        _copied ? 'Copied!' : 'Copy all',
+                        style: TextStyle(
+                          color: _copied
+                              ? AppTheme.accentGreen
+                              : AppTheme.accentAmber,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // Text content
+        Expanded(
+          child: Scrollbar(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: SelectableText(
+                widget.result.recognizedText!,
+                style: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 14.5,
+                  height: 1.6,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
+          ),
+        ),
       ],
     );
   }
 }
 
-class _ImagePreview extends StatelessWidget {
-  final String path;
-  final VoidCallback onChange;
-  const _ImagePreview({required this.path, required this.onChange});
+// ── Labels tab ────────────────────────────────────────────────────────────────
+
+class _LabelsTab extends StatelessWidget {
+  final MlKitResult result;
+  const _LabelsTab({required this.result});
 
   @override
-  Widget build(BuildContext context) => Stack(
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(14),
-            child: Image.file(
-              File(path),
-              width: double.infinity,
-              height: 220,
-              fit: BoxFit.cover,
-            ),
+  Widget build(BuildContext context) {
+    if (!result.hasLabels) {
+      return const _EmptyTab(
+        icon: Icons.label_outline_rounded,
+        message: 'No objects detected',
+        hint: 'Try a photo with clear, recognizable objects',
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.all(12),
+      itemCount: result.labels.length,
+      itemBuilder: (_, i) {
+        final parts = result.labels[i].split(' (');
+        final name = parts[0];
+        final conf = parts.length > 1 ? parts[1].replaceAll(')', '') : '';
+        final pct = int.tryParse(conf.replaceAll('%', '')) ?? 0;
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: AppTheme.bgSurface,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppTheme.borderColor),
           ),
-          Positioned(
-            top: 8,
-            right: 8,
-            child: GestureDetector(
-              onTap: onChange,
-              child: Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.6),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.close_rounded,
-                    color: Colors.white, size: 18),
+          child: Row(
+            children: [
+              const Text('🏷', style: TextStyle(fontSize: 16)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(name,
+                    style: const TextStyle(
+                        color: AppTheme.textPrimary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500)),
               ),
+              const SizedBox(width: 8),
+              // Confidence bar
+              SizedBox(
+                width: 60,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text('$pct%',
+                        style: const TextStyle(
+                            color: AppTheme.accentAmber,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 3),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(3),
+                      child: LinearProgressIndicator(
+                        value: pct / 100,
+                        minHeight: 4,
+                        backgroundColor: AppTheme.borderColor,
+                        valueColor: AlwaysStoppedAnimation(
+                          pct > 80
+                              ? AppTheme.accentGreen
+                              : pct > 60
+                                  ? AppTheme.accentAmber
+                                  : AppTheme.textMuted,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ── Barcodes tab ──────────────────────────────────────────────────────────────
+
+class _BarcodesTab extends StatelessWidget {
+  final MlKitResult result;
+  const _BarcodesTab({required this.result});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!result.hasBarcodes) {
+      return const _EmptyTab(
+        icon: Icons.qr_code_scanner_rounded,
+        message: 'No barcodes or QR codes detected',
+        hint: 'Scan a product barcode, QR code, or URL',
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.all(12),
+      itemCount: result.barcodes.length,
+      itemBuilder: (_, i) {
+        final value = result.barcodes[i];
+        final isUrl =
+            value.startsWith('http://') || value.startsWith('https://');
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppTheme.bgSurface,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isUrl
+                  ? AppTheme.accentBlue.withValues(alpha: 0.4)
+                  : AppTheme.borderColor,
             ),
           ),
-        ],
+          child: Row(
+            children: [
+              Text(isUrl ? '🔗' : '📦', style: const TextStyle(fontSize: 20)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: SelectableText(
+                  value,
+                  style: const TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 13,
+                    fontFamily: 'monospace',
+                    height: 1.5,
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.copy_rounded,
+                    color: AppTheme.textMuted, size: 18),
+                tooltip: 'Copy',
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: value));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Copied'),
+                      duration: Duration(seconds: 1),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ── Empty tab ─────────────────────────────────────────────────────────────────
+
+class _EmptyTab extends StatelessWidget {
+  final IconData icon;
+  final String message;
+  final String hint;
+  const _EmptyTab(
+      {required this.icon, required this.message, required this.hint});
+
+  @override
+  Widget build(BuildContext context) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: AppTheme.textMuted, size: 48),
+              const SizedBox(height: 14),
+              Text(message,
+                  style: const TextStyle(
+                      color: AppTheme.textSecondary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600)),
+              const SizedBox(height: 6),
+              Text(hint,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      color: AppTheme.textMuted, fontSize: 12, height: 1.4)),
+            ],
+          ),
+        ),
       );
 }
 
-// ── Scanner chat bubble ────────────────────────────────────────────────────────
-// Lightweight bubble tailored to this screen (keeps the existing visual
-// language) — shows the attached image inline with the user's turn.
+// ── Toggle row ────────────────────────────────────────────────────────────────
 
-class _ScannerBubble extends StatelessWidget {
-  final ChatMessage message;
-  const _ScannerBubble({required this.message});
-
-  bool get isUser => message.role == 'user';
+class _ToggleRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  const _ToggleRow(
+      {required this.icon,
+      required this.label,
+      required this.value,
+      required this.onChanged});
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(
-          mainAxisAlignment:
-              isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (!isUser) ...[
-              Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: AppTheme.accentAmber.withValues(alpha: 0.12),
-                  border: Border.all(
-                      color: AppTheme.accentAmber.withValues(alpha: 0.35)),
-                ),
-                child: const Center(
-                    child: Text('🔍', style: TextStyle(fontSize: 13))),
-              ),
-              const SizedBox(width: 8),
-            ],
-            Flexible(
-              child: GestureDetector(
-                onLongPress: () {
-                  Clipboard.setData(ClipboardData(text: message.content));
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                        content: Text('Copied'),
-                        duration: Duration(seconds: 1),
-                        behavior: SnackBarBehavior.floating),
-                  );
-                },
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: isUser ? AppTheme.bgBubbleUser : AppTheme.bgBubbleAI,
-                    borderRadius: BorderRadius.only(
-                      topLeft: Radius.circular(isUser ? 16 : 4),
-                      topRight: Radius.circular(isUser ? 4 : 16),
-                      bottomLeft: const Radius.circular(16),
-                      bottomRight: const Radius.circular(16),
-                    ),
-                    border: Border.all(
-                      color: isUser
-                          ? AppTheme.accentGreen.withValues(alpha: 0.2)
-                          : AppTheme.borderColor,
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (message.imagePath != null) ...[
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(10),
-                          child: Image.file(
-                            File(message.imagePath!),
-                            width: 160,
-                            height: 160,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Container(
-                              width: 160,
-                              height: 100,
-                              alignment: Alignment.center,
-                              color: AppTheme.bgBase,
-                              child: const Icon(Icons.broken_image_outlined,
-                                  color: AppTheme.textMuted),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                      ],
-                      message.content.isEmpty && message.isStreaming
-                          ? _dots()
-                          : SelectableText(
-                              message.content,
-                              style: const TextStyle(
-                                  color: AppTheme.textPrimary,
-                                  fontSize: 14.5,
-                                  height: 1.6),
-                            ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            if (isUser) const SizedBox(width: 36),
-          ],
+        padding: const EdgeInsets.only(bottom: 4),
+        child: SwitchListTile(
+          secondary: Icon(icon, color: AppTheme.accentAmber, size: 20),
+          title: Text(label,
+              style:
+                  const TextStyle(color: AppTheme.textPrimary, fontSize: 13)),
+          value: value,
+          onChanged: onChanged,
+          activeColor: AppTheme.accentAmber,
+          contentPadding: EdgeInsets.zero,
         ),
-      );
-
-  Widget _dots() => const SizedBox(
-        height: 20,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _Dot(delay: 0),
-            SizedBox(width: 4),
-            _Dot(delay: 200),
-            SizedBox(width: 4),
-            _Dot(delay: 400),
-          ],
-        ),
-      );
-}
-
-class _Dot extends StatefulWidget {
-  final int delay;
-  const _Dot({required this.delay});
-  @override
-  State<_Dot> createState() => _DotState();
-}
-
-class _DotState extends State<_Dot> with SingleTickerProviderStateMixin {
-  late AnimationController _ctrl;
-  late Animation<double> _anim;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 600));
-    Future.delayed(Duration(milliseconds: widget.delay), () {
-      if (mounted) _ctrl.repeat(reverse: true);
-    });
-    _anim = CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut);
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => FadeTransition(
-        opacity: _anim,
-        child: Container(
-            width: 6,
-            height: 6,
-            decoration: const BoxDecoration(
-                color: AppTheme.accentAmber, shape: BoxShape.circle)),
-      );
-}
-
-// ── Input bar ─────────────────────────────────────────────────────────────────
-
-class _InputBar extends StatelessWidget {
-  final TextEditingController ctrl;
-  final bool hasText;
-  final bool isGenerating;
-  final bool hasStagedImage;
-  final VoidCallback onAttach;
-  final VoidCallback onSend;
-  final VoidCallback onStop;
-  const _InputBar({
-    required this.ctrl,
-    required this.hasText,
-    required this.isGenerating,
-    required this.hasStagedImage,
-    required this.onAttach,
-    required this.onSend,
-    required this.onStop,
-  });
-
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-        decoration: const BoxDecoration(
-          color: AppTheme.bgBase,
-          border: Border(top: BorderSide(color: AppTheme.borderColor)),
-        ),
-        child: SafeArea(
-          top: false,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              // Attach another image
-              GestureDetector(
-                onTap: isGenerating ? null : onAttach,
-                child: Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: AppTheme.bgSurface,
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: hasStagedImage
-                          ? AppTheme.accentGreen.withValues(alpha: 0.5)
-                          : AppTheme.borderColor,
-                    ),
-                  ),
-                  child: Icon(
-                    Icons.add_photo_alternate_outlined,
-                    color: hasStagedImage
-                        ? AppTheme.accentGreen
-                        : AppTheme.textSecondary,
-                    size: 20,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Container(
-                  constraints: const BoxConstraints(maxHeight: 120),
-                  decoration: BoxDecoration(
-                    color: AppTheme.bgSurface,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: AppTheme.borderColor),
-                  ),
-                  child: TextField(
-                    controller: ctrl,
-                    maxLines: null,
-                    enabled: !isGenerating,
-                    style: const TextStyle(
-                        color: AppTheme.textPrimary, fontSize: 15),
-                    decoration: InputDecoration(
-                      hintText: hasStagedImage
-                          ? 'Ask about this image...'
-                          : 'Ask a follow-up...',
-                      hintStyle: const TextStyle(color: AppTheme.textMuted),
-                      border: InputBorder.none,
-                      enabledBorder: InputBorder.none,
-                      focusedBorder: InputBorder.none,
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 10),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 200),
-                child: isGenerating
-                    ? GestureDetector(
-                        key: const ValueKey('stop'),
-                        onTap: onStop,
-                        child: Container(
-                          width: 44,
-                          height: 44,
-                          decoration: BoxDecoration(
-                            color: AppTheme.accentRed.withValues(alpha: 0.15),
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                                color:
-                                    AppTheme.accentRed.withValues(alpha: 0.5)),
-                          ),
-                          child: const Icon(Icons.stop_rounded,
-                              color: AppTheme.accentRed, size: 20),
-                        ),
-                      )
-                    : GestureDetector(
-                        key: const ValueKey('send'),
-                        onTap: hasText ? onSend : null,
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 150),
-                          width: 44,
-                          height: 44,
-                          decoration: BoxDecoration(
-                            color: hasText
-                                ? AppTheme.accentAmber.withValues(alpha: 0.15)
-                                : AppTheme.bgSurface,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: hasText
-                                  ? AppTheme.accentAmber.withValues(alpha: 0.5)
-                                  : AppTheme.borderColor,
-                            ),
-                          ),
-                          child: Icon(Icons.arrow_upward_rounded,
-                              color: hasText
-                                  ? AppTheme.accentAmber
-                                  : AppTheme.textMuted,
-                              size: 20),
-                        ),
-                      ),
-              ),
-            ],
-          ),
-        ),
-      );
-}
-
-// ── Sheet option ──────────────────────────────────────────────────────────────
-
-class _SheetOption extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  const _SheetOption(
-      {required this.icon, required this.label, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) => ListTile(
-        leading: Icon(icon, color: AppTheme.accentAmber),
-        title: Text(label, style: const TextStyle(color: AppTheme.textPrimary)),
-        onTap: onTap,
       );
 }

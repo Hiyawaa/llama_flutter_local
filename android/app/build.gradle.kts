@@ -1,6 +1,6 @@
 plugins {
     id("com.android.application")
-    id("kotlin-android")
+    id("org.jetbrains.kotlin.android") // Use the ID, not the shorthand
     id("dev.flutter.flutter-gradle-plugin")
 }
 
@@ -9,13 +9,14 @@ android {
     compileSdk = flutter.compileSdkVersion
     ndkVersion = "28.2.13676358"
 
+    // Fix: aaptOptions must be inside the android block
+    aaptOptions {
+        noCompress.add("tflite")
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    kotlinOptions {
-        jvmTarget = "17"
     }
 
     defaultConfig {
@@ -26,7 +27,7 @@ android {
         versionName = flutter.versionName
 
         ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
+            abiFilters.addAll(listOf("arm64-v8a", "x86_64"))
         }
     }
 
@@ -43,11 +44,17 @@ android {
     }
 }
 
+// Fix: Use the new compilerOptions DSL instead of kotlinOptions
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
 flutter {
     source = "../.."
 }
 
-// ← ADD THIS BLOCK at the bottom
 dependencies {
     implementation(files("libs/llama-cpp-dart.aar"))
 }

@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
@@ -91,53 +90,23 @@ class ChatBubble extends StatelessWidget {
           ),
           child: message.content.isEmpty && message.isStreaming
               ? const _TypingDots()
-              : Column(
-                  crossAxisAlignment: isUser
-                      ? CrossAxisAlignment.end
-                      : CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (message.imagePath != null) ...[
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(10),
-                        child: Image.file(
-                          File(message.imagePath!),
-                          width: 180,
-                          height: 180,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(
-                            width: 180,
-                            height: 120,
-                            alignment: Alignment.center,
-                            color: AppTheme.bgBase,
-                            child: const Icon(Icons.broken_image_outlined,
-                                color: AppTheme.textMuted),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-                    isUser
-                        ? SelectableText(
-                            message.content,
-                            style: const TextStyle(
-                                color: AppTheme.textPrimary,
-                                fontSize: 14.5,
-                                height: 1.55),
-                          )
-                        : message.isStreaming
-                            // Plain text while streaming — no partial LaTeX/code bugs
-                            ? SelectableText(
-                                message.content,
-                                style: const TextStyle(
-                                    color: AppTheme.textPrimary,
-                                    fontSize: 14.5,
-                                    height: 1.6),
-                              )
-                            // Full render once complete
-                            : _FullRender(content: message.content),
-                  ],
-                ),
+              : isUser
+                  ? SelectableText(
+                      message.content,
+                      style: const TextStyle(
+                          color: AppTheme.textPrimary,
+                          fontSize: 14.5,
+                          height: 1.55),
+                    )
+                  : message.isStreaming
+                      ? SelectableText(
+                          message.content,
+                          style: const TextStyle(
+                              color: AppTheme.textPrimary,
+                              fontSize: 14.5,
+                              height: 1.6),
+                        )
+                      : _FullRender(content: message.content),
         ),
       );
 
@@ -149,13 +118,12 @@ class ChatBubble extends StatelessWidget {
   }
 }
 
-// ── Full render: splits content into text/code/math sections ──────────────────
+// ── Full render ───────────────────────────────────────────────────────────────
 
 class _FullRender extends StatelessWidget {
   final String content;
   const _FullRender({required this.content});
 
-  // Split content into segments: code fences first, then pass text to LaTeX
   static final _codeFence =
       RegExp(r'```(\w*)\n?([\s\S]*?)```', multiLine: true);
 
@@ -165,35 +133,29 @@ class _FullRender extends StatelessWidget {
     int cursor = 0;
 
     for (final m in _codeFence.allMatches(content)) {
-      // Text before code block → LaTeX+Markdown render
       if (m.start > cursor) {
         segments.add(
             _MixedContentView(content: content.substring(cursor, m.start)));
       }
-      // Code block → canvas card
       final lang = (m.group(1) ?? '').trim();
       final code = (m.group(2) ?? '').trimRight();
       segments.add(CodeBlockCard(block: CodeBlock(language: lang, code: code)));
       cursor = m.end;
     }
 
-    // Remaining text after last code block
     if (cursor < content.length) {
       segments.add(_MixedContentView(content: content.substring(cursor)));
     }
-
     if (segments.isEmpty) {
       segments.add(_MixedContentView(content: content));
     }
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: segments,
-    );
+        crossAxisAlignment: CrossAxisAlignment.start, children: segments);
   }
 }
 
-// ── Mixed LaTeX + Markdown renderer ──────────────────────────────────────────
+// ── Mixed LaTeX + Markdown ────────────────────────────────────────────────────
 
 class _Chunk {
   final String text;
@@ -218,15 +180,13 @@ class _MixedContentView extends StatelessWidget {
 
   static final _codeSpan = RegExp(r'`[^`\n]*`');
 
-  String _rewriteParens(String segment) {
-    return segment.replaceAllMapped(
-      RegExp(
-        r'(\\[a-zA-Z]+)\(([^()]*)\)'
-        r'|(?<![a-zA-Z\\])\(\s*((?:[^()]*?\\[a-zA-Z])[^()]*?)\s*\)',
-      ),
-      (m) => m.group(1) != null ? m.group(0)! : '\$${m.group(3)!.trim()}\$',
-    );
-  }
+  String _rewriteParens(String segment) => segment.replaceAllMapped(
+        RegExp(
+          r'(\\[a-zA-Z]+)\(([^()]*)\)'
+          r'|(?<![a-zA-Z\\])\(\s*((?:[^()]*?\\[a-zA-Z])[^()]*?)\s*\)',
+        ),
+        (m) => m.group(1) != null ? m.group(0)! : '\$${m.group(3)!.trim()}\$',
+      );
 
   String _preprocess(String raw) {
     final buf = StringBuffer();
@@ -250,8 +210,7 @@ class _MixedContentView extends StatelessWidget {
       if (braces < 0) return false;
     }
     if (braces != 0) return false;
-    final dollars = RegExp(r'(?<!\\)\$').allMatches(latex).length;
-    return dollars % 2 == 0;
+    return RegExp(r'(?<!\\)\$').allMatches(latex).length % 2 == 0;
   }
 
   List<_Chunk> _parse(String raw) {
@@ -276,9 +235,8 @@ class _MixedContentView extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: chunks
-          .map(
-            (c) => c.isBlockLatex ? _blockMath(c.text) : _inlineSegment(c.text),
-          )
+          .map((c) =>
+              c.isBlockLatex ? _blockMath(c.text) : _inlineSegment(c.text))
           .toList(),
     );
   }
@@ -318,11 +276,7 @@ class _MixedContentView extends StatelessWidget {
   Widget _inlineSegment(String text) {
     final matches = _inlineLatex.allMatches(text).toList();
     if (matches.isEmpty) {
-      return MarkdownBody(
-        data: text,
-        selectable: true,
-        styleSheet: _mdStyle(),
-      );
+      return MarkdownBody(data: text, selectable: true, styleSheet: _mdStyle());
     }
 
     final spans = <InlineSpan>[];
@@ -376,7 +330,6 @@ class _MixedContentView extends StatelessWidget {
   MarkdownStyleSheet _mdStyle() => MarkdownStyleSheet(
         p: const TextStyle(
             color: AppTheme.textPrimary, fontSize: 14.5, height: 1.6),
-        // Inline code only — fenced blocks handled by CodeBlockCard above
         code: const TextStyle(
             fontFamily: 'monospace', fontSize: 13, color: AppTheme.accentAmber),
         codeblockDecoration: BoxDecoration(

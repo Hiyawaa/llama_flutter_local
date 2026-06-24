@@ -7,7 +7,6 @@ import '../models/app_theme.dart';
 import '../models/chat_provider.dart';
 import '../services/llama_service.dart' show ModelStatus;
 import '../services/huggingface_service.dart';
-import 'huggingface_screen.dart';
 
 class ModelPickerScreen extends StatefulWidget {
   const ModelPickerScreen({super.key});
@@ -26,7 +25,6 @@ class _ModelPickerScreenState extends State<ModelPickerScreen> {
     _scanLocalModels();
   }
 
-  /// Scan both the HF downloads folder and the user's Downloads folder
   Future<void> _scanLocalModels() async {
     setState(() => _loadingModels = true);
     final found = <_LocalModel>[];
@@ -36,26 +34,17 @@ class _ModelPickerScreenState extends State<ModelPickerScreen> {
       final hf = HuggingFaceService();
       final hfPaths = await hf.localModels();
       hf.dispose();
-      final hfDirSeen = <String>{};
       for (final path in hfPaths) {
-        if (_isMmprojFile(path)) continue;
         final file = File(path);
         final size = await file.length();
-        final dir = p.dirname(path);
-        hfDirSeen.add(dir);
-        found.add(_LocalModel(
-          path: path,
-          size: size,
-          source: 'Downloaded',
-          isVision: await _hasSiblingMmproj(dir),
-        ));
+        found.add(_LocalModel(path: path, size: size, source: 'Downloaded'));
       }
 
-      // 2. App documents root (user may have placed files here)
+      // 2. App documents root
       final docsDir = await getApplicationDocumentsDirectory();
       await _scanDir(docsDir.path, found, skip: p.join(docsDir.path, 'models'));
 
-      // 3. External storage / Downloads (Android)
+      // 3. External storage (Android)
       final extDirs = await getExternalStorageDirectories();
       if (extDirs != null) {
         for (final dir in extDirs) {
@@ -85,40 +74,16 @@ class _ModelPickerScreenState extends State<ModelPickerScreen> {
     }
   }
 
-  bool _isMmprojFile(String path) =>
-      p.basename(path).toLowerCase().contains('mmproj');
-
-  /// True if [dirPath] contains a file with "mmproj" in its name — meaning
-  /// any main model GGUF in that same folder can do vision.
-  Future<bool> _hasSiblingMmproj(String dirPath) async {
-    try {
-      final dir = Directory(dirPath);
-      if (!await dir.exists()) return false;
-      await for (final e in dir.list(recursive: false)) {
-        if (e is File && _isMmprojFile(e.path)) return true;
-      }
-    } catch (_) {}
-    return false;
-  }
-
   Future<void> _scanDir(String dirPath, List<_LocalModel> out,
       {String? skip}) async {
     try {
       final dir = Directory(dirPath);
       if (!await dir.exists()) return;
-      final hasVisionSibling = await _hasSiblingMmproj(dirPath);
       await for (final e in dir.list(recursive: false)) {
         if (skip != null && e.path == skip) continue;
-        if (e is File &&
-            e.path.toLowerCase().endsWith('.gguf') &&
-            !_isMmprojFile(e.path)) {
+        if (e is File && e.path.toLowerCase().endsWith('.gguf')) {
           final size = await e.length();
-          out.add(_LocalModel(
-            path: e.path,
-            size: size,
-            source: 'Local',
-            isVision: hasVisionSibling,
-          ));
+          out.add(_LocalModel(path: e.path, size: size, source: 'Local'));
         }
       }
     } catch (_) {}
@@ -153,16 +118,20 @@ class _ModelPickerScreenState extends State<ModelPickerScreen> {
                 // ── Action buttons ────────────────────────────────────────
                 _HuggingFaceButton(),
                 const SizedBox(height: 10),
+                _ImageScannerButton(),
+                const SizedBox(height: 10),
 
-                if (provider.llama.isReady)
+                if (provider.llama.isReady) ...[
                   _StartChatButton(provider: provider),
+                  const SizedBox(height: 10),
+                ],
 
-                const SizedBox(height: 24),
+                const SizedBox(height: 14),
 
                 // ── Downloaded models ─────────────────────────────────────
                 Row(
                   children: [
-                    const Text('Downloaded Models',
+                    const Text('DOWNLOADED MODELS',
                         style: TextStyle(
                             color: AppTheme.accentAmber,
                             fontSize: 11,
@@ -190,7 +159,7 @@ class _ModelPickerScreenState extends State<ModelPickerScreen> {
                 const SizedBox(height: 10),
 
                 if (!_loadingModels && _localModels.isEmpty)
-                  _EmptyModels()
+                  const _EmptyModels()
                 else
                   ..._localModels.map((m) => _LocalModelCard(
                         model: m,
@@ -203,13 +172,8 @@ class _ModelPickerScreenState extends State<ModelPickerScreen> {
                             Navigator.pushNamed(context, '/chat');
                           }
                         },
-                        onDelete: () async {
-                          await _confirmDelete(context, m);
-                        },
+                        onDelete: () => _confirmDelete(context, m),
                       )),
-
-                const SizedBox(height: 24),
-                const _VisionModelsSection(),
 
                 const SizedBox(height: 24),
                 const _HintBox(),
@@ -253,18 +217,17 @@ class _ModelPickerScreenState extends State<ModelPickerScreen> {
   }
 }
 
-// ── Data class ────────────────────────────────────────────────────────────────
+// ── Data model ────────────────────────────────────────────────────────────────
 
 class _LocalModel {
   final String path;
   final int size;
   final String source;
-  final bool isVision;
+
   _LocalModel({
     required this.path,
     required this.size,
     required this.source,
-    this.isVision = false,
   });
 
   String get name => p.basename(path);
@@ -291,7 +254,7 @@ class _LocalModel {
       'Q2_K',
       'IQ4_XS',
       'F16',
-      'F32'
+      'F32',
     ]) {
       if (n.contains(q)) return q;
     }
@@ -329,331 +292,134 @@ class _LocalModelCard extends StatelessWidget {
               : AppTheme.borderColor,
         ),
       ),
-      child: Column(
-        children: [
-          // Main row
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
-            child: Row(
-              children: [
-                // Model icon
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color:
-                        (isLoaded ? AppTheme.accentGreen : AppTheme.accentAmber)
-                            .withValues(alpha: 0.1),
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: (isLoaded
-                              ? AppTheme.accentGreen
-                              : AppTheme.accentAmber)
-                          .withValues(alpha: 0.3),
-                    ),
-                  ),
-                  child: Center(
-                    child: Text(
-                      isLoaded ? '✅' : '🤖',
-                      style: const TextStyle(fontSize: 18),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-
-                // Name + meta
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(model.name,
-                          style: const TextStyle(
-                              color: AppTheme.textPrimary,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis),
-                      const SizedBox(height: 4),
-                      Wrap(
-                        spacing: 5,
-                        runSpacing: 5,
-                        children: [
-                          _Chip(model.sizeLabel, color: AppTheme.accentAmber),
-                          if (model.quantLabel.isNotEmpty)
-                            _Chip(model.quantLabel, color: AppTheme.accentBlue),
-                          _Chip(model.source, color: AppTheme.textMuted),
-                          if (model.isVision)
-                            const _Chip('👁 Vision',
-                                color: AppTheme.accentGreen),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-
-                // Actions — fixed width so the row never overflows on the
-                // right regardless of model name/chip length.
-                SizedBox(
-                  width: 64,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (!isLoaded)
-                        SizedBox(
-                          width: double.infinity,
-                          height: 34,
-                          child: ElevatedButton(
-                            onPressed: provider.isLoadingModel ? null : onLoad,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppTheme.accentAmber,
-                              foregroundColor: Colors.black,
-                              padding: EdgeInsets.zero,
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8)),
-                              minimumSize: Size.zero,
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            ),
-                            child: provider.isLoadingModel
-                                ? const SizedBox(
-                                    width: 14,
-                                    height: 14,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2, color: Colors.black))
-                                : const Text('Load',
-                                    style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w700)),
-                          ),
-                        )
-                      else
-                        SizedBox(
-                          width: double.infinity,
-                          height: 34,
-                          child: ElevatedButton(
-                            onPressed: () =>
-                                Navigator.pushNamed(context, '/chat'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppTheme.accentGreen,
-                              foregroundColor: Colors.black,
-                              padding: EdgeInsets.zero,
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8)),
-                              minimumSize: Size.zero,
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            ),
-                            child: const FittedBox(
-                              fit: BoxFit.scaleDown,
-                              child: Text('Chat →',
-                                  style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w700)),
-                            ),
-                          ),
-                        ),
-                      const SizedBox(height: 4),
-                      // Delete
-                      GestureDetector(
-                        onTap: onDelete,
-                        child: const Padding(
-                          padding: EdgeInsets.all(4),
-                          child: Icon(Icons.delete_outline_rounded,
-                              color: AppTheme.textMuted, size: 16),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ── Empty state ───────────────────────────────────────────────────────────────
-
-class _EmptyModels extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: AppTheme.bgSurface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTheme.borderColor),
-      ),
-      child: const Column(
-        children: [
-          Text('📂', style: TextStyle(fontSize: 32)),
-          SizedBox(height: 8),
-          Text('No GGUF files found',
-              style: TextStyle(
-                  color: AppTheme.textPrimary, fontWeight: FontWeight.w600)),
-          SizedBox(height: 4),
-          Text(
-            'Download models from Hugging Face\nor place .gguf files in your Downloads folder',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-                color: AppTheme.textSecondary, fontSize: 12, height: 1.5),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ── Recommended vision models ─────────────────────────────────────────────────
-
-class _VisionModel {
-  final String label;
-  final String note;
-  final String hfModelId;
-  final String ggufFile;
-  final String mmprojFile;
-  const _VisionModel({
-    required this.label,
-    required this.note,
-    required this.hfModelId,
-    required this.ggufFile,
-    required this.mmprojFile,
-  });
-}
-
-class _VisionModelsSection extends StatelessWidget {
-  const _VisionModelsSection();
-
-  static const _models = [
-    _VisionModel(
-      label: 'Qwen2-VL-2B',
-      note: 'Recommended',
-      hfModelId: 'Qwen2-VL',
-      ggufFile: 'Qwen2-VL-2B-Instruct-Q4_0.gguf',
-      mmprojFile: 'Qwen2-VL-2B-Instruct-mmproj-f16.gguf',
-    ),
-    _VisionModel(
-      label: 'MiniCPM-V-2.6',
-      note: '',
-      hfModelId: 'MiniCPM',
-      ggufFile: 'MiniCPM-V-2_6-int4.gguf',
-      mmprojFile: 'MiniCPM-V-2_6-mmproj-bf16.gguf',
-    ),
-    _VisionModel(
-      label: 'Moondream2',
-      note: 'Lightest',
-      hfModelId: 'vikhyatk/moondream2',
-      ggufFile: 'moondream2-text-model-f16.gguf',
-      mmprojFile: 'moondream2-mmproj-f16.gguf',
-    ),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Row(
-          children: [
-            Text('👁 VISION MODELS',
-                style: TextStyle(
-                    color: AppTheme.accentGreen,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1.2)),
-          ],
-        ),
-        const SizedBox(height: 4),
-        const Text(
-          'Needed for the Image Scanner — each model needs TWO files '
-          '(model + mmproj). Tap to open the matching download page.',
-          style:
-              TextStyle(color: AppTheme.textMuted, fontSize: 11.5, height: 1.4),
-        ),
-        const SizedBox(height: 10),
-        ..._models.map((m) => _VisionModelCard(model: m)),
-      ],
-    );
-  }
-}
-
-class _VisionModelCard extends StatelessWidget {
-  final _VisionModel model;
-  const _VisionModelCard({required this.model});
-
-  void _open(BuildContext context) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => HuggingFaceScreen(initialQuery: model.hfModelId),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () => _open(context),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: AppTheme.bgSurface,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppTheme.borderColor),
-        ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
         child: Row(
           children: [
+            // Icon
             Container(
-              width: 36,
-              height: 36,
+              width: 40,
+              height: 40,
               decoration: BoxDecoration(
-                color: AppTheme.accentGreen.withValues(alpha: 0.1),
+                color: (isLoaded ? AppTheme.accentGreen : AppTheme.accentAmber)
+                    .withValues(alpha: 0.1),
                 shape: BoxShape.circle,
                 border: Border.all(
-                    color: AppTheme.accentGreen.withValues(alpha: 0.3)),
+                  color:
+                      (isLoaded ? AppTheme.accentGreen : AppTheme.accentAmber)
+                          .withValues(alpha: 0.3),
+                ),
               ),
-              child: const Center(
-                  child: Text('👁', style: TextStyle(fontSize: 16))),
+              child: Center(
+                child: Text(isLoaded ? '✅' : '🤖',
+                    style: const TextStyle(fontSize: 18)),
+              ),
             ),
             const SizedBox(width: 12),
+
+            // Name + chips
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
+                  Text(model.name,
+                      style: const TextStyle(
+                          color: AppTheme.textPrimary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 4),
+                  Wrap(
+                    spacing: 5,
+                    runSpacing: 4,
                     children: [
-                      Text(model.label,
-                          style: const TextStyle(
-                              color: AppTheme.textPrimary,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600)),
-                      if (model.note.isNotEmpty) ...[
-                        const SizedBox(width: 6),
-                        _Chip(model.note, color: AppTheme.accentGreen),
-                      ],
+                      _Chip(model.sizeLabel, color: AppTheme.accentAmber),
+                      if (model.quantLabel.isNotEmpty)
+                        _Chip(model.quantLabel, color: AppTheme.accentBlue),
+                      _Chip(model.source, color: AppTheme.textMuted),
                     ],
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    '${model.ggufFile} + mmproj',
-                    style: const TextStyle(
-                        color: AppTheme.textMuted, fontSize: 10.5),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
                   ),
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right_rounded,
-                size: 18, color: AppTheme.textMuted),
+            const SizedBox(width: 8),
+
+            // Actions
+            SizedBox(
+              width: 64,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (!isLoaded)
+                    SizedBox(
+                      width: double.infinity,
+                      height: 34,
+                      child: ElevatedButton(
+                        onPressed: provider.isLoadingModel ? null : onLoad,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.accentAmber,
+                          foregroundColor: Colors.black,
+                          padding: EdgeInsets.zero,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8)),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: provider.isLoadingModel
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.black))
+                            : const Text('Load',
+                                style: TextStyle(
+                                    fontSize: 12, fontWeight: FontWeight.w700)),
+                      ),
+                    )
+                  else
+                    SizedBox(
+                      width: double.infinity,
+                      height: 34,
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.pushNamed(context, '/chat'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.accentGreen,
+                          foregroundColor: Colors.black,
+                          padding: EdgeInsets.zero,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8)),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: const FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text('Chat →',
+                              style: TextStyle(
+                                  fontSize: 12, fontWeight: FontWeight.w700)),
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 4),
+                  GestureDetector(
+                    onTap: onDelete,
+                    child: const Padding(
+                      padding: EdgeInsets.all(4),
+                      child: Icon(Icons.delete_outline_rounded,
+                          color: AppTheme.textMuted, size: 16),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 }
+
+// ── Shared widgets ────────────────────────────────────────────────────────────
 
 class _Chip extends StatelessWidget {
   final String label;
@@ -674,24 +440,32 @@ class _Chip extends StatelessWidget {
       );
 }
 
-class _ImageScannerButton extends StatelessWidget {
+class _EmptyModels extends StatelessWidget {
+  const _EmptyModels();
+
   @override
-  Widget build(BuildContext context) => SizedBox(
-        height: 48,
-        child: OutlinedButton.icon(
-          onPressed: () => Navigator.pushNamed(context, '/image-scanner'),
-          icon: const Icon(Icons.image_search_rounded,
-              color: AppTheme.accentGreen),
-          label: const Text('Image Scanner',
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: AppTheme.bgSurface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppTheme.borderColor),
+        ),
+        child: const Column(
+          children: [
+            Text('📂', style: TextStyle(fontSize: 32)),
+            SizedBox(height: 8),
+            Text('No GGUF files found',
+                style: TextStyle(
+                    color: AppTheme.textPrimary, fontWeight: FontWeight.w600)),
+            SizedBox(height: 4),
+            Text(
+              'Download models from Hugging Face\nor place .gguf files in your Downloads folder',
+              textAlign: TextAlign.center,
               style: TextStyle(
-                  color: AppTheme.accentGreen,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600)),
-          style: OutlinedButton.styleFrom(
-            side: const BorderSide(color: AppTheme.accentGreen, width: 1.5),
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          ),
+                  color: AppTheme.textSecondary, fontSize: 12, height: 1.5),
+            ),
+          ],
         ),
       );
 }
@@ -708,6 +482,28 @@ class _HuggingFaceButton extends StatelessWidget {
           style: ElevatedButton.styleFrom(
             backgroundColor: AppTheme.accentAmber,
             foregroundColor: Colors.black,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
+        ),
+      );
+}
+
+class _ImageScannerButton extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        height: 48,
+        child: OutlinedButton.icon(
+          onPressed: () => Navigator.pushNamed(context, '/image-scanner'),
+          icon: const Icon(Icons.document_scanner_rounded,
+              color: AppTheme.accentGreen),
+          label: const Text('Image Scanner',
+              style: TextStyle(
+                  color: AppTheme.accentGreen,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600)),
+          style: OutlinedButton.styleFrom(
+            side: const BorderSide(color: AppTheme.accentGreen, width: 1.5),
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           ),
@@ -800,20 +596,11 @@ class _StatusCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Text(title,
-                        style: TextStyle(
-                            color: color,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600)),
-                    if (status == ModelStatus.ready &&
-                        provider.isVisionCapable) ...[
-                      const SizedBox(width: 6),
-                      const _Chip('👁 Vision', color: AppTheme.accentGreen),
-                    ],
-                  ],
-                ),
+                Text(title,
+                    style: TextStyle(
+                        color: color,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600)),
                 const SizedBox(height: 2),
                 Text(subtitle,
                     style: const TextStyle(
