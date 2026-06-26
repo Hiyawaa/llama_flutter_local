@@ -91,13 +91,7 @@ class ChatBubble extends StatelessWidget {
           child: message.content.isEmpty && message.isStreaming
               ? const _TypingDots()
               : isUser
-                  ? SelectableText(
-                      message.content,
-                      style: const TextStyle(
-                          color: AppTheme.textPrimary,
-                          fontSize: 14.5,
-                          height: 1.55),
-                    )
+                  ? _UserContent(content: message.content)
                   : message.isStreaming
                       ? SelectableText(
                           message.content,
@@ -115,6 +109,254 @@ class ChatBubble extends StatelessWidget {
     final m = message.timestamp.minute.toString().padLeft(2, '0');
     return Text('$h:$m',
         style: const TextStyle(color: AppTheme.textMuted, fontSize: 10));
+  }
+}
+
+// ── User content (plain text, or a scanned-image card if detected) ──────────
+
+/// Parsed pieces of a message built from a scanned image, matching the
+/// format produced by ImageScannerScreen._composeFinalPrompt.
+class _ScanContext {
+  final String instruction;
+  final String? barcode;
+  final String? ocrText;
+  final List<String> labels;
+
+  const _ScanContext({
+    required this.instruction,
+    this.barcode,
+    this.ocrText,
+    this.labels = const [],
+  });
+
+  bool get hasDetails =>
+      barcode != null || ocrText != null || labels.isNotEmpty;
+}
+
+/// Detects the "instruction + detected scan context" shape produced when
+/// sending a scanned image to chat, and splits out the raw OCR text/labels
+/// so the bubble can show a compact summary instead of dumping them.
+_ScanContext? _parseScanContext(String content) {
+  const ocrMarker =
+      '--- OCR text from the image (may contain recognition errors) ---';
+  final hasOcr = content.contains(ocrMarker);
+  final barcodeMatch = RegExp(r'^Detected code/link: (.+)$', multiLine: true)
+      .firstMatch(content);
+  final labelsMatch =
+      RegExp(r'^Detected objects/labels: (.+)$', multiLine: true)
+          .firstMatch(content);
+
+  if (!hasOcr && barcodeMatch == null && labelsMatch == null) return null;
+
+  // Everything before the first marker line is the user's instruction.
+  final markers = <int>[];
+  if (barcodeMatch != null) markers.add(barcodeMatch.start);
+  if (hasOcr) markers.add(content.indexOf(ocrMarker));
+  if (labelsMatch != null) markers.add(labelsMatch.start);
+  final cutoff = markers.reduce((a, b) => a < b ? a : b);
+  final instruction = content.substring(0, cutoff).trim();
+
+  String? ocrText;
+  if (hasOcr) {
+    final start = content.indexOf(ocrMarker) + ocrMarker.length;
+    var end = content.length;
+    if (labelsMatch != null && labelsMatch.start > start) {
+      end = labelsMatch.start;
+    }
+    ocrText = content.substring(start, end).trim();
+  }
+
+  final labels = labelsMatch != null
+      ? labelsMatch
+          .group(1)!
+          .split(',')
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .toList()
+      : <String>[];
+
+  return _ScanContext(
+    instruction: instruction.isEmpty ? '(scanned image)' : instruction,
+    barcode: barcodeMatch?.group(1)?.trim(),
+    ocrText: (ocrText != null && ocrText.isNotEmpty) ? ocrText : null,
+    labels: labels,
+  );
+}
+
+class _UserContent extends StatelessWidget {
+  final String content;
+  const _UserContent({required this.content});
+
+  @override
+  Widget build(BuildContext context) {
+    final scan = _parseScanContext(content);
+    if (scan == null) {
+      return SelectableText(
+        content,
+        style: const TextStyle(
+            color: AppTheme.textPrimary, fontSize: 14.5, height: 1.55),
+      );
+    }
+    return _ScannedImageContent(scan: scan);
+  }
+}
+
+class _ScannedImageContent extends StatefulWidget {
+  final _ScanContext scan;
+  const _ScannedImageContent({required this.scan});
+
+  @override
+  State<_ScannedImageContent> createState() => _ScannedImageContentState();
+}
+
+class _ScannedImageContentState extends State<_ScannedImageContent> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final scan = widget.scan;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SelectableText(
+          scan.instruction,
+          style: const TextStyle(
+              color: AppTheme.textPrimary, fontSize: 14.5, height: 1.55),
+        ),
+        if (scan.hasDetails) ...[
+          const SizedBox(height: 8),
+          GestureDetector(
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: BoxDecoration(
+                color: AppTheme.bgBase.withAlpha((0.5 * 255).round()),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                    color:
+                        AppTheme.accentGreen.withAlpha((0.25 * 255).round())),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('📷', style: TextStyle(fontSize: 13)),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Scanned image',
+                    style: const TextStyle(
+                        color: AppTheme.accentGreen,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    _summaryLabel(scan),
+                    style: const TextStyle(
+                        color: AppTheme.textMuted, fontSize: 11),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    _expanded
+                        ? Icons.keyboard_arrow_up_rounded
+                        : Icons.keyboard_arrow_down_rounded,
+                    size: 15,
+                    color: AppTheme.textMuted,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_expanded) ...[
+            const SizedBox(height: 6),
+            Container(
+              padding: const EdgeInsets.all(10),
+              constraints: const BoxConstraints(maxHeight: 180),
+              decoration: BoxDecoration(
+                color: AppTheme.bgBase.withAlpha((0.4 * 255).round()),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppTheme.borderColor),
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (scan.barcode != null) ...[
+                      Text('Code/link',
+                          style: TextStyle(
+                              color: AppTheme.textMuted.withAlpha(180),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.5)),
+                      const SizedBox(height: 2),
+                      SelectableText(scan.barcode!,
+                          style: const TextStyle(
+                              color: AppTheme.textSecondary,
+                              fontSize: 12,
+                              fontFamily: 'monospace')),
+                      const SizedBox(height: 8),
+                    ],
+                    if (scan.ocrText != null) ...[
+                      Text('Recognized text',
+                          style: TextStyle(
+                              color: AppTheme.textMuted.withAlpha(180),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.5)),
+                      const SizedBox(height: 2),
+                      SelectableText(scan.ocrText!,
+                          style: const TextStyle(
+                              color: AppTheme.textSecondary,
+                              fontSize: 12.5,
+                              height: 1.5)),
+                      const SizedBox(height: 8),
+                    ],
+                    if (scan.labels.isNotEmpty) ...[
+                      Text('Detected objects',
+                          style: TextStyle(
+                              color: AppTheme.textMuted.withAlpha(180),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.5)),
+                      const SizedBox(height: 4),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: scan.labels
+                            .map((l) => Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.bgSurface,
+                                    borderRadius: BorderRadius.circular(20),
+                                    border:
+                                        Border.all(color: AppTheme.borderColor),
+                                  ),
+                                  child: Text(l,
+                                      style: const TextStyle(
+                                          color: AppTheme.textSecondary,
+                                          fontSize: 11)),
+                                ))
+                            .toList(),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ],
+      ],
+    );
+  }
+
+  String _summaryLabel(_ScanContext scan) {
+    final parts = <String>[];
+    if (scan.ocrText != null) parts.add('text');
+    if (scan.labels.isNotEmpty) parts.add('${scan.labels.length} labels');
+    if (scan.barcode != null) parts.add('code');
+    return parts.isEmpty ? '' : '· ${parts.join(', ')}';
   }
 }
 

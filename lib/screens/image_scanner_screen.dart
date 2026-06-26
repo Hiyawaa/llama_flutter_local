@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:image_cropper/image_cropper.dart';
 import 'package:provider/provider.dart';
 import '../models/app_theme.dart';
 import '../models/chat_provider.dart';
@@ -43,18 +44,46 @@ class _ImageScannerScreenState extends State<ImageScannerScreen>
     super.dispose();
   }
 
-  // ── Image picking ─────────────────────────────────────────────────────────
+  // ── Image picking + cropping ─────────────────────────────────────────────
 
   Future<void> _pickCamera() async {
     final f =
         await _picker.pickImage(source: ImageSource.camera, imageQuality: 90);
-    if (f != null) await _analyze(f.path);
+    if (f == null) return;
+    final cropped = await _crop(f.path);
+    if (cropped != null) await _analyze(cropped);
   }
 
   Future<void> _pickGallery() async {
     final f =
         await _picker.pickImage(source: ImageSource.gallery, imageQuality: 90);
-    if (f != null) await _analyze(f.path);
+    if (f == null) return;
+    final cropped = await _crop(f.path);
+    if (cropped != null) await _analyze(cropped);
+  }
+
+  Future<String?> _crop(String sourcePath) async {
+    final cropped = await ImageCropper().cropImage(
+      sourcePath: sourcePath,
+      uiSettings: [
+        AndroidUiSettings(
+          toolbarTitle: 'Crop Image',
+          toolbarColor: const Color(0xFF0F0F11),
+          toolbarWidgetColor: const Color(0xFFF59E0B),
+          backgroundColor: const Color(0xFF0F0F11),
+          activeControlsWidgetColor: const Color(0xFFF59E0B),
+          dimmedLayerColor: const Color(0xAA000000),
+          cropFrameColor: const Color(0xFFF59E0B),
+          cropGridColor: const Color(0x55F59E0B),
+          cropFrameStrokeWidth: 3,
+          showCropGrid: true,
+          lockAspectRatio: false,
+          hideBottomControls: false,
+          initAspectRatio: CropAspectRatioPreset.original,
+        ),
+      ],
+    );
+    return cropped?.path;
   }
 
   Future<void> _analyze(String path) async {
@@ -210,6 +239,10 @@ class _ImageScannerScreenState extends State<ImageScannerScreen>
               onRescan: () => _analyze(_imagePath!),
               onNewImage: () => _showPickSheet(context),
               onSendToChat: () => _sendToChat(context),
+              onCrop: () async {
+                final cropped = await _crop(_imagePath!);
+                if (cropped != null) _analyze(cropped);
+              },
             ),
     );
   }
@@ -458,6 +491,7 @@ class _ScanArea extends StatelessWidget {
   final VoidCallback onRescan;
   final VoidCallback onNewImage;
   final VoidCallback onSendToChat;
+  final VoidCallback onCrop;
 
   const _ScanArea({
     required this.imagePath,
@@ -467,6 +501,7 @@ class _ScanArea extends StatelessWidget {
     required this.onRescan,
     required this.onNewImage,
     required this.onSendToChat,
+    required this.onCrop,
   });
 
   @override
@@ -507,6 +542,11 @@ class _ScanArea extends StatelessWidget {
                       icon: Icons.swap_horiz_rounded,
                       tooltip: 'New image',
                       onTap: onNewImage),
+                  const SizedBox(width: 6),
+                  _ImgBtn(
+                      icon: Icons.crop_rounded,
+                      tooltip: 'Crop & re-scan',
+                      onTap: onCrop),
                   const SizedBox(width: 6),
                   _ImgBtn(
                       icon: Icons.refresh_rounded,
