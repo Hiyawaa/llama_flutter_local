@@ -508,6 +508,13 @@ class _MixedContentView extends StatelessWidget {
     r'\s*[,.;:]*\s*$',
   );
 
+  static final _bareEquationLine = RegExp(
+    r'^(?:[-+*/]?\s*)?'
+    r'(?:[A-Z](?![a-z])|\d+|\\(?:frac|sqrt|sum|int|left|right))'
+    r'[\s\S]*?(?:=|\\frac|\\sqrt|\\\\|\\quad)'
+    r'[\s\S]*$',
+  );
+
   static final _codeSpan = RegExp(r'`[^`\n]*`');
 
   static final _bareMathEnvironment = RegExp(
@@ -553,6 +560,7 @@ class _MixedContentView extends StatelessWidget {
   String _normalizeLatex(String latex) {
     var normalized = latex.trim();
     normalized = normalized
+        .replaceAll('\$', '')
         .replaceAll(RegExp(r'\\begin\{align\*?\}'), r'\begin{aligned}')
         .replaceAll(RegExp(r'\\end\{align\*?\}'), r'\end{aligned}')
         .replaceAll(RegExp(r'\\begin\{gather\*?\}'), r'\begin{gathered}')
@@ -648,20 +656,44 @@ class _MixedContentView extends StatelessWidget {
 
   Widget _inlineSegment(String text) {
     final lines = text.split('\n');
-    if (lines.length > 1 && lines.any((line) => _mathOnlyLine.hasMatch(line))) {
+    if (lines.length > 1 &&
+        lines.any(
+          (line) => _mathOnlyLine.hasMatch(line) || _isBareEquationLine(line),
+        )) {
+      final children = <Widget>[];
+      var index = 0;
+      while (index < lines.length) {
+        final line = lines[index];
+        if (line.trim().isEmpty) {
+          children.add(const SizedBox(height: 8));
+          index++;
+          continue;
+        }
+        if (_mathOnlyLine.hasMatch(line)) {
+          children.add(_mathLine(line));
+          index++;
+          continue;
+        }
+        if (_isBareEquationLine(line)) {
+          children.add(_bareEquationLineWidget(line));
+          index++;
+          continue;
+        }
+        children.add(_inlineTextSegment(line));
+        index++;
+      }
+
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (final line in lines)
-            if (line.trim().isEmpty)
-              const SizedBox(height: 8)
-            else if (_mathOnlyLine.hasMatch(line))
-              _mathLine(line)
-            else
-              _inlineSegment(line),
-        ],
+        children: children,
       );
     }
+
+    return _inlineTextSegment(text);
+  }
+
+  Widget _inlineTextSegment(String text) {
+    if (_isBareEquationLine(text)) return _bareEquationLineWidget(text);
 
     final matches = _inlineLatex.allMatches(text).toList();
     if (matches.isEmpty) {
@@ -738,6 +770,72 @@ class _MixedContentView extends StatelessWidget {
     return SelectableText.rich(TextSpan(children: spans));
   }
 
+  bool _isBareEquationLine(String line) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty || _mathOnlyLine.hasMatch(trimmed)) return false;
+    if (trimmed.startsWith('#') || trimmed.startsWith('>')) return false;
+
+    final candidate =
+        trimmed.replaceFirst(RegExp(r'^(?:[-*+]|\d+[.)])\s+'), '').trim();
+    if (!_bareEquationLine.hasMatch(candidate)) return false;
+    if (!RegExp(r'[=+\-*/^_\\]').hasMatch(candidate)) return false;
+
+    final equalsIndex = candidate.indexOf('=');
+    final colonIndex = candidate.indexOf(':');
+    if (equalsIndex > 0 && colonIndex >= 0 && colonIndex < equalsIndex) {
+      return false;
+    }
+    if (RegExp(r'^[A-Za-z]{2,}\b').hasMatch(candidate)) return false;
+    if (RegExp(r'\.\s+[A-Z][a-z]{2,}').hasMatch(candidate)) return false;
+
+    final words = RegExp(r'[A-Za-z]{3,}').allMatches(candidate).length;
+    final mathCommands = RegExp(r'\\[A-Za-z]+').allMatches(candidate).length;
+    return mathCommands > 0 || words <= 2;
+  }
+
+  Widget _bareEquationLineWidget(String line) {
+    final latex = _sanitizeBareEquation(line);
+    if (latex.isEmpty) return const SizedBox.shrink();
+    if (!_isBalanced(latex)) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: _mathFallback(latex),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: SizedBox(
+        width: double.infinity,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Math.tex(
+            latex,
+            mathStyle: MathStyle.display,
+            textStyle: const TextStyle(
+              color: AppTheme.textPrimary,
+              fontSize: 16,
+            ),
+            onErrorFallback: (_) => _mathFallback(latex),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _sanitizeBareEquation(String line) {
+    var latex = line.trim();
+    latex = latex.replaceFirst(RegExp(r'^(?:[-*+]|\d+[.)])\s+'), '').trim();
+    latex = latex.replaceAll('\$', '');
+    latex = latex.replaceAll(RegExp(r'\s*\\\\+\s*$'), '');
+    latex = latex.replaceAll(RegExp(r'\s+'), ' ');
+
+    final incompleteText = latex.indexOf(RegExp(r'\\quad\s+\\text\{[^}]*$'));
+    if (incompleteText >= 0) latex = latex.substring(0, incompleteText).trim();
+
+    return _normalizeLatex(latex);
+  }
+
   Widget _mathLine(String line) {
     final match = _mathOnlyLine.firstMatch(line)!;
     final marker = (match.group(1) ?? '').trim();
@@ -796,9 +894,10 @@ class _MixedContentView extends StatelessWidget {
   Widget _mathFallback(String text) => SelectableText(
         text,
         style: const TextStyle(
-          color: AppTheme.textMuted,
+          color: AppTheme.textPrimary,
           fontFamily: 'monospace',
           fontSize: 13,
+          height: 1.45,
         ),
       );
 
