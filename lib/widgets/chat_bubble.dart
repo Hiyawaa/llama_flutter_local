@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
@@ -27,11 +28,7 @@ class ChatBubble extends StatelessWidget {
             child: Column(
               crossAxisAlignment:
                   isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-              children: [
-                _bubble(context),
-                const SizedBox(height: 2),
-                _time(),
-              ],
+              children: [_bubble(context), const SizedBox(height: 2), _time()],
             ),
           ),
           const SizedBox(width: 8),
@@ -46,11 +43,15 @@ class ChatBubble extends StatelessWidget {
         height: 28,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: (isUser ? AppTheme.accentGreen : AppTheme.accentAmber)
-              .withAlpha((0.12 * 255).round()),
+          color:
+              (isUser ? AppTheme.accentGreen : AppTheme.accentAmber).withAlpha(
+            (0.12 * 255).round(),
+          ),
           border: Border.all(
             color: (isUser ? AppTheme.accentGreen : AppTheme.accentAmber)
-                .withAlpha((0.35 * 255).round()),
+                .withAlpha(
+              (0.35 * 255).round(),
+            ),
           ),
         ),
         child: Center(
@@ -72,7 +73,8 @@ class ChatBubble extends StatelessWidget {
         },
         child: Container(
           constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.85),
+            maxWidth: MediaQuery.of(context).size.width * 0.85,
+          ),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
             color: isUser ? AppTheme.bgBubbleUser : AppTheme.bgBubbleAI,
@@ -91,14 +93,16 @@ class ChatBubble extends StatelessWidget {
           child: message.content.isEmpty && message.isStreaming
               ? const _TypingDots()
               : isUser
-                  ? _UserContent(content: message.content)
+                  ? _UserContent(
+                      content: message.content, imagePath: message.imagePath)
                   : message.isStreaming
                       ? SelectableText(
                           message.content,
                           style: const TextStyle(
-                              color: AppTheme.textPrimary,
-                              fontSize: 14.5,
-                              height: 1.6),
+                            color: AppTheme.textPrimary,
+                            fontSize: 14.5,
+                            height: 1.6,
+                          ),
                         )
                       : _FullRender(content: message.content),
         ),
@@ -107,8 +111,10 @@ class ChatBubble extends StatelessWidget {
   Widget _time() {
     final h = message.timestamp.hour.toString().padLeft(2, '0');
     final m = message.timestamp.minute.toString().padLeft(2, '0');
-    return Text('$h:$m',
-        style: const TextStyle(color: AppTheme.textMuted, fontSize: 10));
+    return Text(
+      '$h:$m',
+      style: const TextStyle(color: AppTheme.textMuted, fontSize: 10),
+    );
   }
 }
 
@@ -140,11 +146,14 @@ _ScanContext? _parseScanContext(String content) {
   const ocrMarker =
       '--- OCR text from the image (may contain recognition errors) ---';
   final hasOcr = content.contains(ocrMarker);
-  final barcodeMatch = RegExp(r'^Detected code/link: (.+)$', multiLine: true)
-      .firstMatch(content);
-  final labelsMatch =
-      RegExp(r'^Detected objects/labels: (.+)$', multiLine: true)
-          .firstMatch(content);
+  final barcodeMatch = RegExp(
+    r'^Detected code/link: (.+)$',
+    multiLine: true,
+  ).firstMatch(content);
+  final labelsMatch = RegExp(
+    r'^Detected objects/labels: (.+)$',
+    multiLine: true,
+  ).firstMatch(content);
 
   if (!hasOcr && barcodeMatch == null && labelsMatch == null) return null;
 
@@ -185,19 +194,42 @@ _ScanContext? _parseScanContext(String content) {
 
 class _UserContent extends StatelessWidget {
   final String content;
-  const _UserContent({required this.content});
+  final String? imagePath;
+  const _UserContent({required this.content, this.imagePath});
 
   @override
   Widget build(BuildContext context) {
+    final image = imagePath;
     final scan = _parseScanContext(content);
-    if (scan == null) {
-      return SelectableText(
-        content,
-        style: const TextStyle(
-            color: AppTheme.textPrimary, fontSize: 14.5, height: 1.55),
-      );
-    }
-    return _ScannedImageContent(scan: scan);
+    final text = scan == null
+        ? SelectableText(
+            content,
+            style: const TextStyle(
+              color: AppTheme.textPrimary,
+              fontSize: 14.5,
+              height: 1.55,
+            ),
+          )
+        : _ScannedImageContent(scan: scan);
+
+    if (image == null || image.isEmpty) return text;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: Image.file(
+            File(image),
+            width: 220,
+            height: 150,
+            fit: BoxFit.cover,
+          ),
+        ),
+        const SizedBox(height: 8),
+        text,
+      ],
+    );
   }
 }
 
@@ -222,7 +254,10 @@ class _ScannedImageContentState extends State<_ScannedImageContent> {
         SelectableText(
           scan.instruction,
           style: const TextStyle(
-              color: AppTheme.textPrimary, fontSize: 14.5, height: 1.55),
+            color: AppTheme.textPrimary,
+            fontSize: 14.5,
+            height: 1.55,
+          ),
         ),
         if (scan.hasDetails) ...[
           const SizedBox(height: 8),
@@ -234,8 +269,8 @@ class _ScannedImageContentState extends State<_ScannedImageContent> {
                 color: AppTheme.bgBase.withAlpha((0.5 * 255).round()),
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
-                    color:
-                        AppTheme.accentGreen.withAlpha((0.25 * 255).round())),
+                  color: AppTheme.accentGreen.withAlpha((0.25 * 255).round()),
+                ),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -245,15 +280,18 @@ class _ScannedImageContentState extends State<_ScannedImageContent> {
                   Text(
                     'Scanned image',
                     style: const TextStyle(
-                        color: AppTheme.accentGreen,
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w600),
+                      color: AppTheme.accentGreen,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   const SizedBox(width: 6),
                   Text(
                     _summaryLabel(scan),
                     style: const TextStyle(
-                        color: AppTheme.textMuted, fontSize: 11),
+                      color: AppTheme.textMuted,
+                      fontSize: 11,
+                    ),
                   ),
                   const SizedBox(width: 4),
                   Icon(
@@ -283,61 +321,84 @@ class _ScannedImageContentState extends State<_ScannedImageContent> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (scan.barcode != null) ...[
-                      Text('Code/link',
-                          style: TextStyle(
-                              color: AppTheme.textMuted.withAlpha(180),
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.5)),
+                      Text(
+                        'Code/link',
+                        style: TextStyle(
+                          color: AppTheme.textMuted.withAlpha(180),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
                       const SizedBox(height: 2),
-                      SelectableText(scan.barcode!,
-                          style: const TextStyle(
-                              color: AppTheme.textSecondary,
-                              fontSize: 12,
-                              fontFamily: 'monospace')),
+                      SelectableText(
+                        scan.barcode!,
+                        style: const TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 12,
+                          fontFamily: 'monospace',
+                        ),
+                      ),
                       const SizedBox(height: 8),
                     ],
                     if (scan.ocrText != null) ...[
-                      Text('Recognized text',
-                          style: TextStyle(
-                              color: AppTheme.textMuted.withAlpha(180),
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.5)),
+                      Text(
+                        'Recognized text',
+                        style: TextStyle(
+                          color: AppTheme.textMuted.withAlpha(180),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
                       const SizedBox(height: 2),
-                      SelectableText(scan.ocrText!,
-                          style: const TextStyle(
-                              color: AppTheme.textSecondary,
-                              fontSize: 12.5,
-                              height: 1.5)),
+                      SelectableText(
+                        scan.ocrText!,
+                        style: const TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 12.5,
+                          height: 1.5,
+                        ),
+                      ),
                       const SizedBox(height: 8),
                     ],
                     if (scan.labels.isNotEmpty) ...[
-                      Text('Detected objects',
-                          style: TextStyle(
-                              color: AppTheme.textMuted.withAlpha(180),
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.5)),
+                      Text(
+                        'Detected objects',
+                        style: TextStyle(
+                          color: AppTheme.textMuted.withAlpha(180),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
                       const SizedBox(height: 4),
                       Wrap(
                         spacing: 6,
                         runSpacing: 6,
                         children: scan.labels
-                            .map((l) => Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 8, vertical: 3),
-                                  decoration: BoxDecoration(
-                                    color: AppTheme.bgSurface,
-                                    borderRadius: BorderRadius.circular(20),
-                                    border:
-                                        Border.all(color: AppTheme.borderColor),
+                            .map(
+                              (l) => Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.bgSurface,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                    color: AppTheme.borderColor,
                                   ),
-                                  child: Text(l,
-                                      style: const TextStyle(
-                                          color: AppTheme.textSecondary,
-                                          fontSize: 11)),
-                                ))
+                                ),
+                                child: Text(
+                                  l,
+                                  style: const TextStyle(
+                                    color: AppTheme.textSecondary,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ),
+                            )
                             .toList(),
                       ),
                     ],
@@ -366,8 +427,10 @@ class _FullRender extends StatelessWidget {
   final String content;
   const _FullRender({required this.content});
 
-  static final _codeFence =
-      RegExp(r'```(\w*)\n?([\s\S]*?)```', multiLine: true);
+  static final _codeFence = RegExp(
+    r'```(\w*)\n?([\s\S]*?)```',
+    multiLine: true,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -377,11 +440,16 @@ class _FullRender extends StatelessWidget {
     for (final m in _codeFence.allMatches(content)) {
       if (m.start > cursor) {
         segments.add(
-            _MixedContentView(content: content.substring(cursor, m.start)));
+          _MixedContentView(content: content.substring(cursor, m.start)),
+        );
       }
       final lang = (m.group(1) ?? '').trim();
       final code = (m.group(2) ?? '').trimRight();
-      segments.add(CodeBlockCard(block: CodeBlock(language: lang, code: code)));
+      segments.add(
+        CodeBlockCard(
+          block: CodeBlock(language: lang, code: code),
+        ),
+      );
       cursor = m.end;
     }
 
@@ -393,7 +461,9 @@ class _FullRender extends StatelessWidget {
     }
 
     return Column(
-        crossAxisAlignment: CrossAxisAlignment.start, children: segments);
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: segments,
+    );
   }
 }
 
@@ -403,6 +473,18 @@ class _Chunk {
   final String text;
   final bool isBlockLatex;
   const _Chunk(this.text, {this.isBlockLatex = false});
+}
+
+class _MathMatch {
+  final int start;
+  final int end;
+  final String latex;
+
+  const _MathMatch({
+    required this.start,
+    required this.end,
+    required this.latex,
+  });
 }
 
 class _MixedContentView extends StatelessWidget {
@@ -420,7 +502,20 @@ class _MixedContentView extends StatelessWidget {
     r'|\\\(([\s\S]+?)\\\)',
   );
 
+  static final _mathOnlyLine = RegExp(
+    r'^(\s*(?:[-*+]|\d+[.)])\s+)?'
+    r'(?:\$\s*([^\$]+?)\s*\$|\\\(([\s\S]+?)\\\))'
+    r'\s*[,.;:]*\s*$',
+  );
+
   static final _codeSpan = RegExp(r'`[^`\n]*`');
+
+  static final _bareMathEnvironment = RegExp(
+    r'\\begin\{(align\*?|aligned|gather\*?|gathered|equation\*?|'
+    r'matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|cases|array)\}'
+    r'[\s\S]*?\\end\{\1\}',
+    multiLine: true,
+  );
 
   String _rewriteParens(String segment) => segment.replaceAllMapped(
         RegExp(
@@ -455,16 +550,45 @@ class _MixedContentView extends StatelessWidget {
     return RegExp(r'(?<!\\)\$').allMatches(latex).length % 2 == 0;
   }
 
+  String _normalizeLatex(String latex) {
+    var normalized = latex.trim();
+    normalized = normalized
+        .replaceAll(RegExp(r'\\begin\{align\*?\}'), r'\begin{aligned}')
+        .replaceAll(RegExp(r'\\end\{align\*?\}'), r'\end{aligned}')
+        .replaceAll(RegExp(r'\\begin\{gather\*?\}'), r'\begin{gathered}')
+        .replaceAll(RegExp(r'\\end\{gather\*?\}'), r'\end{gathered}')
+        .replaceAll(RegExp(r'\\begin\{equation\*?\}'), '')
+        .replaceAll(RegExp(r'\\end\{equation\*?\}'), '');
+    return normalized.trim();
+  }
+
   List<_Chunk> _parse(String raw) {
     final text = _preprocess(raw);
     final chunks = <_Chunk>[];
     int cursor = 0;
-    for (final m in _blockLatex.allMatches(text)) {
+    final matches = <_MathMatch>[
+      ..._blockLatex.allMatches(text).map(
+            (m) => _MathMatch(
+              start: m.start,
+              end: m.end,
+              latex: (m.group(1) ?? m.group(2) ?? '').trim(),
+            ),
+          ),
+      ..._bareMathEnvironment.allMatches(text).map(
+            (m) => _MathMatch(
+              start: m.start,
+              end: m.end,
+              latex: m.group(0)!.trim(),
+            ),
+          ),
+    ]..sort((a, b) => a.start.compareTo(b.start));
+
+    for (final m in matches) {
+      if (m.start < cursor) continue;
       if (m.start > cursor) {
         chunks.add(_Chunk(text.substring(cursor, m.start)));
       }
-      chunks.add(
-          _Chunk((m.group(1) ?? m.group(2) ?? '').trim(), isBlockLatex: true));
+      chunks.add(_Chunk(_normalizeLatex(m.latex), isBlockLatex: true));
       cursor = m.end;
     }
     if (cursor < text.length) chunks.add(_Chunk(text.substring(cursor)));
@@ -477,38 +601,45 @@ class _MixedContentView extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: chunks
-          .map((c) =>
-              c.isBlockLatex ? _blockMath(c.text) : _inlineSegment(c.text))
+          .map(
+            (c) => c.isBlockLatex ? _blockMath(c.text) : _inlineSegment(c.text),
+          )
           .toList(),
     );
   }
 
   Widget _blockMath(String latex) {
-    if (!_isBalanced(latex)) {
+    final normalized = _normalizeLatex(latex);
+    if (!_isBalanced(normalized)) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
-        child: SelectableText(latex,
-            style: const TextStyle(
-                color: AppTheme.textMuted,
-                fontFamily: 'monospace',
-                fontSize: 13)),
+        child: SelectableText(
+          normalized,
+          style: const TextStyle(
+            color: AppTheme.textMuted,
+            fontFamily: 'monospace',
+            fontSize: 13,
+          ),
+        ),
       );
     }
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Center(
+      child: SizedBox(
+        width: double.infinity,
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
-          child: Math.tex(
-            latex,
-            mathStyle: MathStyle.display,
-            textStyle:
-                const TextStyle(color: AppTheme.textPrimary, fontSize: 16),
-            onErrorFallback: (_) => SelectableText(latex,
-                style: const TextStyle(
-                    color: AppTheme.textMuted,
-                    fontFamily: 'monospace',
-                    fontSize: 13)),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Math.tex(
+              normalized,
+              mathStyle: MathStyle.display,
+              textStyle: const TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 16,
+              ),
+              onErrorFallback: (_) => _mathFallback(normalized),
+            ),
           ),
         ),
       ),
@@ -516,6 +647,22 @@ class _MixedContentView extends StatelessWidget {
   }
 
   Widget _inlineSegment(String text) {
+    final lines = text.split('\n');
+    if (lines.length > 1 && lines.any((line) => _mathOnlyLine.hasMatch(line))) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final line in lines)
+            if (line.trim().isEmpty)
+              const SizedBox(height: 8)
+            else if (_mathOnlyLine.hasMatch(line))
+              _mathLine(line)
+            else
+              _inlineSegment(line),
+        ],
+      );
+    }
+
     final matches = _inlineLatex.allMatches(text).toList();
     if (matches.isEmpty) {
       return MarkdownBody(data: text, selectable: true, styleSheet: _mdStyle());
@@ -525,86 +672,189 @@ class _MixedContentView extends StatelessWidget {
     int cursor = 0;
     for (final m in matches) {
       if (m.start > cursor) {
-        spans.add(TextSpan(
-          text: text.substring(cursor, m.start),
-          style: const TextStyle(
-              color: AppTheme.textPrimary, fontSize: 14.5, height: 1.6),
-        ));
-      }
-      final latex = (m.group(1) ?? m.group(2) ?? '').trim();
-      if (!_isBalanced(latex)) {
-        spans.add(TextSpan(
-          text: m.group(0),
-          style: const TextStyle(
-              color: AppTheme.textMuted, fontFamily: 'monospace', fontSize: 13),
-        ));
-      } else {
-        spans.add(WidgetSpan(
-          alignment: PlaceholderAlignment.middle,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 1),
-            child: Math.tex(
-              latex,
-              mathStyle: MathStyle.text,
-              textStyle:
-                  const TextStyle(color: AppTheme.textPrimary, fontSize: 14.5),
-              onErrorFallback: (_) => Text(latex,
-                  style: const TextStyle(
-                      color: AppTheme.textMuted,
-                      fontFamily: 'monospace',
-                      fontSize: 13)),
+        spans.add(
+          TextSpan(
+            text: text.substring(cursor, m.start),
+            style: const TextStyle(
+              color: AppTheme.textPrimary,
+              fontSize: 14.5,
+              height: 1.6,
             ),
           ),
-        ));
+        );
+      }
+      final latex = _normalizeLatex((m.group(1) ?? m.group(2) ?? '').trim());
+      if (!_isBalanced(latex)) {
+        spans.add(
+          TextSpan(
+            text: m.group(0),
+            style: const TextStyle(
+              color: AppTheme.textMuted,
+              fontFamily: 'monospace',
+              fontSize: 13,
+            ),
+          ),
+        );
+      } else {
+        spans.add(
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 1),
+              child: Math.tex(
+                latex,
+                mathStyle: MathStyle.text,
+                textStyle: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 14.5,
+                ),
+                onErrorFallback: (_) => Text(
+                  latex,
+                  style: const TextStyle(
+                    color: AppTheme.textMuted,
+                    fontFamily: 'monospace',
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
       }
       cursor = m.end;
     }
     if (cursor < text.length) {
-      spans.add(TextSpan(
-        text: text.substring(cursor),
-        style: const TextStyle(
-            color: AppTheme.textPrimary, fontSize: 14.5, height: 1.6),
-      ));
+      spans.add(
+        TextSpan(
+          text: text.substring(cursor),
+          style: const TextStyle(
+            color: AppTheme.textPrimary,
+            fontSize: 14.5,
+            height: 1.6,
+          ),
+        ),
+      );
     }
     return SelectableText.rich(TextSpan(children: spans));
   }
 
+  Widget _mathLine(String line) {
+    final match = _mathOnlyLine.firstMatch(line)!;
+    final marker = (match.group(1) ?? '').trim();
+    final latex =
+        _normalizeLatex((match.group(2) ?? match.group(3) ?? '').trim());
+    final bullet = marker.isEmpty
+        ? null
+        : RegExp(r'^[-*+]$').hasMatch(marker)
+            ? '•'
+            : marker;
+
+    if (!_isBalanced(latex)) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: _mathFallback(line.trim()),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (bullet != null) ...[
+            SizedBox(
+              width: 18,
+              child: Text(
+                bullet,
+                style: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 14.5,
+                  height: 1.6,
+                ),
+              ),
+            ),
+          ],
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Math.tex(
+                latex,
+                mathStyle: MathStyle.display,
+                textStyle: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 16,
+                ),
+                onErrorFallback: (_) => _mathFallback(latex),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _mathFallback(String text) => SelectableText(
+        text,
+        style: const TextStyle(
+          color: AppTheme.textMuted,
+          fontFamily: 'monospace',
+          fontSize: 13,
+        ),
+      );
+
   MarkdownStyleSheet _mdStyle() => MarkdownStyleSheet(
         p: const TextStyle(
-            color: AppTheme.textPrimary, fontSize: 14.5, height: 1.6),
+          color: AppTheme.textPrimary,
+          fontSize: 14.5,
+          height: 1.6,
+        ),
         code: const TextStyle(
-            fontFamily: 'monospace', fontSize: 13, color: AppTheme.accentAmber),
+          fontFamily: 'monospace',
+          fontSize: 13,
+          color: AppTheme.accentAmber,
+        ),
         codeblockDecoration: BoxDecoration(
           color: AppTheme.bgBase,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: AppTheme.borderColor),
         ),
         strong: const TextStyle(
-            color: AppTheme.textPrimary, fontWeight: FontWeight.w700),
+          color: AppTheme.textPrimary,
+          fontWeight: FontWeight.w700,
+        ),
         em: const TextStyle(
-            color: AppTheme.textPrimary, fontStyle: FontStyle.italic),
+          color: AppTheme.textPrimary,
+          fontStyle: FontStyle.italic,
+        ),
         blockquote: const TextStyle(
-            color: AppTheme.textMuted, fontSize: 14, height: 1.6),
+          color: AppTheme.textMuted,
+          fontSize: 14,
+          height: 1.6,
+        ),
         blockquoteDecoration: BoxDecoration(
           border: Border(
             left: BorderSide(
-                color: AppTheme.accentAmber.withAlpha((0.5 * 255).round()),
-                width: 3),
+              color: AppTheme.accentAmber.withAlpha((0.5 * 255).round()),
+              width: 3,
+            ),
           ),
         ),
         blockquotePadding: const EdgeInsets.only(left: 12, top: 4, bottom: 4),
         h1: const TextStyle(
-            color: AppTheme.textPrimary,
-            fontSize: 20,
-            fontWeight: FontWeight.w700),
+          color: AppTheme.textPrimary,
+          fontSize: 20,
+          fontWeight: FontWeight.w700,
+        ),
         h2: const TextStyle(
-            color: AppTheme.textPrimary,
-            fontSize: 18,
-            fontWeight: FontWeight.w700),
+          color: AppTheme.textPrimary,
+          fontSize: 18,
+          fontWeight: FontWeight.w700,
+        ),
         h3: const TextStyle(
-            color: AppTheme.textPrimary,
-            fontSize: 16,
-            fontWeight: FontWeight.w600),
+          color: AppTheme.textPrimary,
+          fontSize: 16,
+          fontWeight: FontWeight.w600,
+        ),
         listBullet:
             const TextStyle(color: AppTheme.textPrimary, fontSize: 14.5),
       );
@@ -626,8 +876,9 @@ class _TypingDotsState extends State<_TypingDots>
   void initState() {
     super.initState();
     _ctrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 1200))
-      ..repeat();
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
   }
 
   @override
@@ -643,8 +894,10 @@ class _TypingDotsState extends State<_TypingDots>
           mainAxisSize: MainAxisSize.min,
           children: List.generate(3, (i) {
             final opacity =
-                (1 - ((_ctrl.value - i / 3).abs() % 1.0 - 0.5).abs() * 2)
-                    .clamp(0.2, 1.0);
+                (1 - ((_ctrl.value - i / 3).abs() % 1.0 - 0.5).abs() * 2).clamp(
+              0.2,
+              1.0,
+            );
             return Padding(
               padding: const EdgeInsets.symmetric(horizontal: 2),
               child: Opacity(
@@ -653,7 +906,9 @@ class _TypingDotsState extends State<_TypingDots>
                   width: 6,
                   height: 6,
                   decoration: const BoxDecoration(
-                      color: AppTheme.accentAmber, shape: BoxShape.circle),
+                    color: AppTheme.accentAmber,
+                    shape: BoxShape.circle,
+                  ),
                 ),
               ),
             );

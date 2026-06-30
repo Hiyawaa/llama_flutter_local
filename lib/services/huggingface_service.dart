@@ -137,12 +137,14 @@ class HuggingFaceService {
   final http.Client _client = http.Client();
 
   Future<List<HFModel>> searchModels(String query, {int limit = 20}) async {
-    final uri = Uri.parse('$_apiBase/models').replace(queryParameters: {
-      'search': query.isEmpty ? 'gguf' : query,
-      'filter': 'gguf',
-      'sort': 'downloads',
-      'limit': '$limit',
-    });
+    final uri = Uri.parse('$_apiBase/models').replace(
+      queryParameters: {
+        'search': query.isEmpty ? 'gguf' : query,
+        'filter': 'gguf',
+        'sort': 'downloads',
+        'limit': '$limit',
+      },
+    );
 
     final response = await _client.get(uri, headers: {
       'Accept': 'application/json'
@@ -187,7 +189,11 @@ class HuggingFaceService {
       final sz = await existing.length();
       if (file.size > 0 && sz == file.size) {
         yield DownloadProgress(
-            filename: file.filename, received: sz, total: sz, isDone: true);
+          filename: file.filename,
+          received: sz,
+          total: sz,
+          isDone: true,
+        );
         return;
       }
       await existing.delete();
@@ -199,10 +205,11 @@ class HuggingFaceService {
 
     if (response.statusCode != 200) {
       yield DownloadProgress(
-          filename: file.filename,
-          received: 0,
-          total: file.size,
-          error: 'HTTP ${response.statusCode}');
+        filename: file.filename,
+        received: 0,
+        total: file.size,
+        error: 'HTTP ${response.statusCode}',
+      );
       return;
     }
 
@@ -215,23 +222,28 @@ class HuggingFaceService {
         sink.add(chunk);
         received += chunk.length;
         yield DownloadProgress(
-            filename: file.filename, received: received, total: total);
+          filename: file.filename,
+          received: received,
+          total: total,
+        );
       }
       await sink.flush();
       await sink.close();
       yield DownloadProgress(
-          filename: file.filename,
-          received: received,
-          total: total,
-          isDone: true);
+        filename: file.filename,
+        received: received,
+        total: total,
+        isDone: true,
+      );
     } catch (e) {
       await sink.close();
       if (await File(savePath).exists()) await File(savePath).delete();
       yield DownloadProgress(
-          filename: file.filename,
-          received: received,
-          total: total,
-          error: e.toString());
+        filename: file.filename,
+        received: received,
+        total: total,
+        error: e.toString(),
+      );
     }
   }
 
@@ -241,7 +253,11 @@ class HuggingFaceService {
     final files = await dir.list().toList();
     return files
         .whereType<File>()
-        .where((f) => f.path.endsWith('.gguf'))
+        .where(
+          (f) =>
+              f.path.endsWith('.gguf') &&
+              !p.basename(f.path).toLowerCase().contains('mmproj'),
+        )
         .map((f) => f.path)
         .toList();
   }

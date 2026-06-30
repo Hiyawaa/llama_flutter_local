@@ -17,30 +17,21 @@ class DownloadService {
 
     // Configure notification shown in the status bar while downloading
     FileDownloader().configureNotification(
-      running: const TaskNotification(
-        'Downloading {filename}',
-        '{progress}',
-      ),
-      complete: const TaskNotification(
-        '{filename}',
-        'Download complete ✓',
-      ),
+      running: const TaskNotification('Downloading {filename}', '{progress}'),
+      complete: const TaskNotification('{filename}', 'Download complete ✓'),
       error: const TaskNotification(
         '{filename}',
         'Download failed — tap to retry',
       ),
-      paused: const TaskNotification(
-        '{filename}',
-        'Paused',
-      ),
+      paused: const TaskNotification('{filename}', 'Paused'),
       progressBar: true,
       tapOpensFile: false,
     );
 
     // Allow up to 2 hours for large GGUF files
-    await FileDownloader().configure(globalConfig: [
-      (Config.requestTimeout, const Duration(hours: 2)),
-    ]);
+    await FileDownloader().configure(
+      globalConfig: [(Config.requestTimeout, const Duration(hours: 2))],
+    );
 
     _initialized = true;
   }
@@ -97,13 +88,15 @@ class DownloadService {
   static Future<void> pause(String filename) async {
     final id = _activeTasks[filename];
     if (id != null) {
-      await FileDownloader().pause(DownloadTask(
-        taskId: id,
-        url: '',
-        filename: filename,
-        directory: 'models',
-        baseDirectory: BaseDirectory.applicationDocuments,
-      ));
+      await FileDownloader().pause(
+        DownloadTask(
+          taskId: id,
+          url: '',
+          filename: filename,
+          directory: 'models',
+          baseDirectory: BaseDirectory.applicationDocuments,
+        ),
+      );
     }
   }
 
@@ -131,7 +124,11 @@ class DownloadService {
     return dir
         .listSync()
         .whereType<File>()
-        .where((f) => f.path.endsWith('.gguf'))
+        .where(
+          (f) =>
+              f.path.endsWith('.gguf') &&
+              !p.basename(f.path).toLowerCase().contains('mmproj'),
+        )
         .map((f) => f.path)
         .toList();
   }

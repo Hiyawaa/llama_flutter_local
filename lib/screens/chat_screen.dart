@@ -80,15 +80,22 @@ class _ChatScreenState extends State<ChatScreen> {
             title: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('🦙 LlamaDart',
-                    style: TextStyle(
-                        color: AppTheme.textPrimary,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600)),
-                Text(modelName,
-                    style: const TextStyle(
-                        color: AppTheme.textMuted, fontSize: 10),
-                    overflow: TextOverflow.ellipsis),
+                const Text(
+                  '🦙 LlamaDart',
+                  style: TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  modelName,
+                  style: const TextStyle(
+                    color: AppTheme.textMuted,
+                    fontSize: 10,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
               ],
             ),
             actions: [
@@ -169,8 +176,10 @@ class _ChatScreenState extends State<ChatScreen> {
           children: [
             Text('🦙', style: TextStyle(fontSize: 52)),
             SizedBox(height: 12),
-            Text('Model loaded — start chatting!',
-                style: TextStyle(color: AppTheme.textSecondary, fontSize: 14)),
+            Text(
+              'Model loaded — start chatting!',
+              style: TextStyle(color: AppTheme.textSecondary, fontSize: 14),
+            ),
           ],
         ),
       );
@@ -183,7 +192,7 @@ class _ChatScreenState extends State<ChatScreen> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              // ── Image Scanner button ──────────────────────────────────────
+              // ── Vision chat button ────────────────────────────────────────
               GestureDetector(
                 onTap: () => Navigator.push(
                   context,
@@ -220,15 +229,19 @@ class _ChatScreenState extends State<ChatScreen> {
                     maxLines: null,
                     enabled: !provider.isGenerating,
                     style: const TextStyle(
-                        color: AppTheme.textPrimary, fontSize: 15),
+                      color: AppTheme.textPrimary,
+                      fontSize: 15,
+                    ),
                     decoration: const InputDecoration(
                       hintText: 'Message...',
                       hintStyle: TextStyle(color: AppTheme.textMuted),
                       border: InputBorder.none,
                       enabledBorder: InputBorder.none,
                       focusedBorder: InputBorder.none,
-                      contentPadding:
-                          EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
                     ),
                   ),
                 ),
@@ -239,7 +252,6 @@ class _ChatScreenState extends State<ChatScreen> {
               AnimatedSwitcher(
                 duration: const Duration(milliseconds: 200),
                 child: provider.isGenerating
-
                     // STOP button
                     ? GestureDetector(
                         key: const ValueKey('stop'),
@@ -251,7 +263,8 @@ class _ChatScreenState extends State<ChatScreen> {
                             color: AppTheme.accentRed.withAlpha(30),
                             shape: BoxShape.circle,
                             border: Border.all(
-                                color: AppTheme.accentRed.withAlpha(120)),
+                              color: AppTheme.accentRed.withAlpha(120),
+                            ),
                           ),
                           child: const Icon(
                             Icons.stop_rounded,
@@ -260,7 +273,6 @@ class _ChatScreenState extends State<ChatScreen> {
                           ),
                         ),
                       )
-
                     // SEND button
                     : GestureDetector(
                         key: const ValueKey('send'),
@@ -296,24 +308,36 @@ class _ChatScreenState extends State<ChatScreen> {
       );
 
   Future<void> _confirmClear(
-      BuildContext context, ChatProvider provider) async {
+    BuildContext context,
+    ChatProvider provider,
+  ) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppTheme.bgSurface,
-        title: const Text('Clear chat?',
-            style: TextStyle(color: AppTheme.textPrimary)),
-        content: const Text('All messages will be deleted.',
-            style: TextStyle(color: AppTheme.textSecondary)),
+        title: const Text(
+          'Clear chat?',
+          style: TextStyle(color: AppTheme.textPrimary),
+        ),
+        content: const Text(
+          'All messages will be deleted.',
+          style: TextStyle(color: AppTheme.textSecondary),
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel',
-                  style: TextStyle(color: AppTheme.textSecondary))),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: AppTheme.textSecondary),
+            ),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Clear',
-                  style: TextStyle(color: AppTheme.accentRed))),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              'Clear',
+              style: TextStyle(color: AppTheme.accentRed),
+            ),
+          ),
         ],
       ),
     );

@@ -89,14 +89,22 @@ class _HuggingFaceScreenState extends State<HuggingFaceScreen> {
               style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
               decoration: InputDecoration(
                 hintText: 'Search models (e.g. Qwen, Llama, Phi)...',
-                hintStyle:
-                    const TextStyle(color: AppTheme.textMuted, fontSize: 13),
-                prefixIcon: const Icon(Icons.search,
-                    color: AppTheme.textMuted, size: 20),
+                hintStyle: const TextStyle(
+                  color: AppTheme.textMuted,
+                  fontSize: 13,
+                ),
+                prefixIcon: const Icon(
+                  Icons.search,
+                  color: AppTheme.textMuted,
+                  size: 20,
+                ),
                 suffixIcon: _searchCtrl.text.isNotEmpty
                     ? IconButton(
-                        icon: const Icon(Icons.clear,
-                            color: AppTheme.textMuted, size: 18),
+                        icon: const Icon(
+                          Icons.clear,
+                          color: AppTheme.textMuted,
+                          size: 18,
+                        ),
                         onPressed: () {
                           _searchCtrl.clear();
                           _search('gguf');
@@ -105,18 +113,25 @@ class _HuggingFaceScreenState extends State<HuggingFaceScreen> {
                     : null,
                 filled: true,
                 fillColor: AppTheme.bgSurface,
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
                 border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(color: AppTheme.borderColor)),
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: AppTheme.borderColor),
+                ),
                 enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(color: AppTheme.borderColor)),
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: AppTheme.borderColor),
+                ),
                 focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(
-                        color: AppTheme.accentAmber, width: 1.5)),
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(
+                    color: AppTheme.accentAmber,
+                    width: 1.5,
+                  ),
+                ),
               ),
               onSubmitted: _search,
               onChanged: (_) => setState(() {}),
@@ -126,15 +141,20 @@ class _HuggingFaceScreenState extends State<HuggingFaceScreen> {
       ),
       body: _searching
           ? const Center(
-              child: CircularProgressIndicator(color: AppTheme.accentAmber))
+              child: CircularProgressIndicator(color: AppTheme.accentAmber),
+            )
           : _searchError != null
               ? _ErrorView(
                   error: _searchError!,
-                  onRetry: () => _search(_searchCtrl.text))
+                  onRetry: () => _search(_searchCtrl.text),
+                )
               : _models.isEmpty
                   ? const Center(
-                      child: Text('No models found',
-                          style: TextStyle(color: AppTheme.textSecondary)))
+                      child: Text(
+                        'No models found',
+                        style: TextStyle(color: AppTheme.textSecondary),
+                      ),
+                    )
                   : ListView.builder(
                       padding: const EdgeInsets.all(12),
                       itemCount: _models.length,
@@ -148,17 +168,18 @@ class _HuggingFaceScreenState extends State<HuggingFaceScreen> {
 
   void _openModel(HFModel model) {
     Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => _ModelFilesScreen(
-            model: model,
-            hf: _hf,
-            downloads: _downloads,
-            onUpdate: () {
-              if (mounted) setState(() {});
-            },
-          ),
-        ));
+      context,
+      MaterialPageRoute(
+        builder: (_) => _ModelFilesScreen(
+          model: model,
+          hf: _hf,
+          downloads: _downloads,
+          onUpdate: () {
+            if (mounted) setState(() {});
+          },
+        ),
+      ),
+    );
   }
 }
 
@@ -187,26 +208,38 @@ class _ModelCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(model.name,
-                      style: const TextStyle(
-                          color: AppTheme.textPrimary,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600)),
+                  Text(
+                    model.name,
+                    style: const TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                   const SizedBox(height: 2),
-                  Text(model.author,
-                      style: const TextStyle(
-                          color: AppTheme.textSecondary, fontSize: 12)),
+                  Text(
+                    model.author,
+                    style: const TextStyle(
+                      color: AppTheme.textSecondary,
+                      fontSize: 12,
+                    ),
+                  ),
                   const SizedBox(height: 6),
-                  Row(children: [
-                    _Tag('⬇ ${_fmt(model.downloads)}'),
-                    const SizedBox(width: 6),
-                    _Tag('❤ ${model.likes}'),
-                  ]),
+                  Row(
+                    children: [
+                      _Tag('⬇ ${_fmt(model.downloads)}'),
+                      const SizedBox(width: 6),
+                      _Tag('❤ ${model.likes}'),
+                    ],
+                  ),
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right_rounded,
-                color: AppTheme.textMuted, size: 20),
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: AppTheme.textMuted,
+              size: 20,
+            ),
           ],
         ),
       ),
@@ -231,9 +264,10 @@ class _Tag extends StatelessWidget {
           borderRadius: BorderRadius.circular(6),
           border: Border.all(color: AppTheme.borderColor),
         ),
-        child: Text(label,
-            style:
-                const TextStyle(color: AppTheme.textSecondary, fontSize: 11)),
+        child: Text(
+          label,
+          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 11),
+        ),
       );
 }
 
@@ -331,9 +365,9 @@ class _ModelFilesScreenState extends State<_ModelFilesScreen> {
     setState(() => widget.downloads.remove(file.filename));
   }
 
-  Future<void> _loadModel(String path) async {
+  Future<void> _loadModel(String path, {String? mmprojPath}) async {
     final provider = context.read<ChatProvider>();
-    await provider.loadModel(path);
+    await provider.loadModel(path, mmprojPath: mmprojPath);
     if (!mounted) return;
     Navigator.popUntil(context, (r) => r.isFirst);
     Navigator.pushNamed(context, '/chat');
@@ -355,11 +389,15 @@ class _ModelFilesScreenState extends State<_ModelFilesScreen> {
       return;
     }
 
-    final mmprojDownloaded =
-        mmprojFiles.any((f) => widget.downloads[f.filename]?.done == true);
+    final downloadedMmproj = mmprojFiles
+        .where((f) => widget.downloads[f.filename]?.done == true)
+        .toList();
 
-    if (mmprojDownloaded) {
-      await _loadModel(path);
+    if (downloadedMmproj.isNotEmpty) {
+      final mmprojPath = await DownloadService.localPath(
+        downloadedMmproj.first.filename,
+      );
+      await _loadModel(path, mmprojPath: mmprojPath);
       return;
     }
 
@@ -368,25 +406,31 @@ class _ModelFilesScreenState extends State<_ModelFilesScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppTheme.bgSurface,
-        title: const Text('Missing vision file',
-            style: TextStyle(color: AppTheme.textPrimary)),
+        title: const Text(
+          'Missing vision file',
+          style: TextStyle(color: AppTheme.textPrimary),
+        ),
         content: Text(
           'This model supports image understanding, but its mmproj file '
           '(${mmprojFiles.first.filename}) hasn\'t been downloaded yet.\n\n'
           "Without it, this will load as a text-only model and the image "
-          "scanner won't be available.",
+          "vision chat won't be available.",
           style: const TextStyle(color: AppTheme.textSecondary, height: 1.4),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Download mmproj first',
-                style: TextStyle(color: AppTheme.accentGreen)),
+            child: const Text(
+              'Download mmproj first',
+              style: TextStyle(color: AppTheme.accentGreen),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Load anyway (text-only)',
-                style: TextStyle(color: AppTheme.textSecondary)),
+            child: const Text(
+              'Load anyway (text-only)',
+              style: TextStyle(color: AppTheme.textSecondary),
+            ),
           ),
         ],
       ),
@@ -407,14 +451,18 @@ class _ModelFilesScreenState extends State<_ModelFilesScreen> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(widget.model.name,
-                style: const TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600)),
-            Text(widget.model.author,
-                style:
-                    const TextStyle(color: AppTheme.textMuted, fontSize: 11)),
+            Text(
+              widget.model.name,
+              style: const TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            Text(
+              widget.model.author,
+              style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+            ),
           ],
         ),
       ),
@@ -422,11 +470,15 @@ class _ModelFilesScreenState extends State<_ModelFilesScreen> {
           ? _ErrorView(error: _error!, onRetry: _load)
           : _files == null
               ? const Center(
-                  child: CircularProgressIndicator(color: AppTheme.accentAmber))
+                  child: CircularProgressIndicator(color: AppTheme.accentAmber),
+                )
               : _files!.isEmpty
                   ? const Center(
-                      child: Text('No GGUF files found',
-                          style: TextStyle(color: AppTheme.textSecondary)))
+                      child: Text(
+                        'No GGUF files found',
+                        style: TextStyle(color: AppTheme.textSecondary),
+                      ),
+                    )
                   : ListView(
                       padding: const EdgeInsets.all(12),
                       children: [
@@ -438,37 +490,42 @@ class _ModelFilesScreenState extends State<_ModelFilesScreen> {
                         if (hasVisionVariant) const _VisionRequiredBanner(),
 
                         const _SectionLabel('Model'),
-                        ...mainFiles.map((f) => _FileCard(
-                              file: f,
-                              dl: widget.downloads[f.filename],
-                              onDownload: () => _startDownload(f),
-                              onCancel: () => _cancel(f),
-                              onLoad: () => _loadWithVisionCheck(f),
-                            )),
+                        ...mainFiles.map(
+                          (f) => _FileCard(
+                            file: f,
+                            dl: widget.downloads[f.filename],
+                            onDownload: () => _startDownload(f),
+                            onCancel: () => _cancel(f),
+                            onLoad: () => _loadWithVisionCheck(f),
+                          ),
+                        ),
 
                         if (mmprojFiles.isNotEmpty) ...[
                           const SizedBox(height: 8),
                           const _SectionLabel(
                               'Vision file (required for images)'),
-                          ...mmprojFiles.map((f) => _FileCard(
-                                file: f,
-                                dl: widget.downloads[f.filename],
-                                isMmproj: true,
-                                onDownload: () => _startDownload(f),
-                                onCancel: () => _cancel(f),
-                                onLoad: () async {
-                                  // mmproj files aren't "loaded" on their own —
-                                  // they get auto-attached when the main model
-                                  // loads. Tapping just confirms it's ready.
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text(
-                                          'Vision file ready — load the main '
-                                          'model above to enable image scanning'),
+                          ...mmprojFiles.map(
+                            (f) => _FileCard(
+                              file: f,
+                              dl: widget.downloads[f.filename],
+                              isMmproj: true,
+                              onDownload: () => _startDownload(f),
+                              onCancel: () => _cancel(f),
+                              onLoad: () async {
+                                // mmproj files aren't "loaded" on their own —
+                                // they get auto-attached when the main model
+                                // loads. Tapping just confirms it's ready.
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'Vision file ready — load the main '
+                                      'model above to enable image scanning',
                                     ),
-                                  );
-                                },
-                              )),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
                         ],
                       ],
                     ),
@@ -496,9 +553,12 @@ class _VisionRequiredBanner extends StatelessWidget {
             Expanded(
               child: Text(
                 'This model supports images — download BOTH the model file '
-                'and the vision file below for the image scanner to work.',
+                'and the vision file below for image chat to work.',
                 style: TextStyle(
-                    color: AppTheme.accentGreen, fontSize: 12, height: 1.4),
+                  color: AppTheme.accentGreen,
+                  fontSize: 12,
+                  height: 1.4,
+                ),
               ),
             ),
           ],
@@ -526,7 +586,10 @@ class _ActiveDownloadsBanner extends StatelessWidget {
                 'Download continues in the background — '
                 'check the notification bar for progress.',
                 style: TextStyle(
-                    color: AppTheme.accentAmber, fontSize: 12, height: 1.4),
+                  color: AppTheme.accentAmber,
+                  fontSize: 12,
+                  height: 1.4,
+                ),
               ),
             ),
           ],
@@ -540,12 +603,15 @@ class _SectionLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.only(bottom: 10),
-        child: Text(text.toUpperCase(),
-            style: const TextStyle(
-                color: AppTheme.accentAmber,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 1.2)),
+        child: Text(
+          text.toUpperCase(),
+          style: const TextStyle(
+            color: AppTheme.accentAmber,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1.2,
+          ),
+        ),
       );
 }
 
@@ -599,19 +665,26 @@ class _FileCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(file.filename,
-                        style: const TextStyle(
-                            color: AppTheme.textPrimary,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500)),
+                    Text(
+                      file.filename,
+                      style: const TextStyle(
+                        color: AppTheme.textPrimary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
                     const SizedBox(height: 4),
-                    Wrap(spacing: 5, runSpacing: 5, children: [
-                      _Tag2(file.sizeLabel, AppTheme.accentAmber),
-                      if (file.quantLabel.isNotEmpty)
-                        _Tag2(file.quantLabel, AppTheme.accentBlue),
-                      if (isMmproj)
-                        _Tag2('Required for vision', AppTheme.accentGreen),
-                    ]),
+                    Wrap(
+                      spacing: 5,
+                      runSpacing: 5,
+                      children: [
+                        _Tag2(file.sizeLabel, AppTheme.accentAmber),
+                        if (file.quantLabel.isNotEmpty)
+                          _Tag2(file.quantLabel, AppTheme.accentBlue),
+                        if (isMmproj)
+                          _Tag2('Required for vision', AppTheme.accentGreen),
+                      ],
+                    ),
                   ],
                 ),
               ),
@@ -643,31 +716,45 @@ class _FileCard extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('${(dl!.progress * 100).toStringAsFixed(1)}%',
-                    style: const TextStyle(
-                        color: AppTheme.accentAmber, fontSize: 11)),
-                const Text('Downloading...',
-                    style: TextStyle(color: AppTheme.textMuted, fontSize: 10)),
+                Text(
+                  '${(dl!.progress * 100).toStringAsFixed(1)}%',
+                  style: const TextStyle(
+                    color: AppTheme.accentAmber,
+                    fontSize: 11,
+                  ),
+                ),
+                const Text(
+                  'Downloading...',
+                  style: TextStyle(color: AppTheme.textMuted, fontSize: 10),
+                ),
               ],
             ),
           ],
 
           if (isDone) ...[
             const SizedBox(height: 6),
-            const Row(children: [
-              Icon(Icons.check_circle_rounded,
-                  color: AppTheme.accentGreen, size: 13),
-              SizedBox(width: 4),
-              Text('Downloaded',
-                  style: TextStyle(color: AppTheme.accentGreen, fontSize: 11)),
-            ]),
+            const Row(
+              children: [
+                Icon(
+                  Icons.check_circle_rounded,
+                  color: AppTheme.accentGreen,
+                  size: 13,
+                ),
+                SizedBox(width: 4),
+                Text(
+                  'Downloaded',
+                  style: TextStyle(color: AppTheme.accentGreen, fontSize: 11),
+                ),
+              ],
+            ),
           ],
 
           if (failed && dl?.error != null) ...[
             const SizedBox(height: 6),
-            Text(dl!.error!,
-                style:
-                    const TextStyle(color: AppTheme.accentRed, fontSize: 11)),
+            Text(
+              dl!.error!,
+              style: const TextStyle(color: AppTheme.accentRed, fontSize: 11),
+            ),
           ],
         ],
       ),
@@ -687,9 +774,11 @@ class _Tag2 extends StatelessWidget {
           borderRadius: BorderRadius.circular(5),
           border: Border.all(color: color.withValues(alpha: 0.3)),
         ),
-        child: Text(label,
-            style: TextStyle(
-                color: color, fontSize: 10, fontWeight: FontWeight.w600)),
+        child: Text(
+          label,
+          style: TextStyle(
+              color: color, fontSize: 10, fontWeight: FontWeight.w600),
+        ),
       );
 }
 
@@ -722,14 +811,19 @@ class _ActionBtn extends StatelessWidget {
           minimumSize: Size.zero,
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
-        child: const Text('Load',
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+        child: const Text(
+          'Load',
+          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+        ),
       );
     }
     if (running) {
       return IconButton(
-        icon: const Icon(Icons.cancel_rounded,
-            color: AppTheme.accentRed, size: 22),
+        icon: const Icon(
+          Icons.cancel_rounded,
+          color: AppTheme.accentRed,
+          size: 22,
+        ),
         tooltip: 'Cancel',
         onPressed: onCancel,
         padding: EdgeInsets.zero,
@@ -764,19 +858,25 @@ class _ErrorView extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.wifi_off_rounded,
-                  color: AppTheme.accentRed, size: 40),
+              const Icon(
+                Icons.wifi_off_rounded,
+                color: AppTheme.accentRed,
+                size: 40,
+              ),
               const SizedBox(height: 12),
-              Text(error,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                      color: AppTheme.textSecondary, fontSize: 13)),
+              Text(
+                error,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    color: AppTheme.textSecondary, fontSize: 13),
+              ),
               const SizedBox(height: 16),
               ElevatedButton(
                 onPressed: onRetry,
                 style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.accentAmber,
-                    foregroundColor: Colors.black),
+                  backgroundColor: AppTheme.accentAmber,
+                  foregroundColor: Colors.black,
+                ),
                 child: const Text('Retry'),
               ),
             ],
