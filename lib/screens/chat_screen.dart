@@ -21,6 +21,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final _inputCtrl = TextEditingController();
   final _focusNode = FocusNode();
   bool _hasText = false;
+  ChatMessage? _replyingTo;
 
   @override
   void initState() {
@@ -51,12 +52,38 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  void _startReply(ChatMessage message) {
+    setState(() => _replyingTo = message);
+    _focusNode.requestFocus();
+  }
+
+  void _cancelReply() {
+    setState(() => _replyingTo = null);
+  }
+
   void _send(ChatProvider provider) {
     final text = _inputCtrl.text.trim();
     if (text.isEmpty || provider.isGenerating) return;
+
+    final reply = _replyingTo;
     _inputCtrl.clear();
-    provider.sendMessage(text);
+    setState(() => _replyingTo = null);
+
+    // Fold the quoted message into the outgoing prompt so the model has
+    // context, without permanently mutating what's shown in the bubble.
+    final outgoing = reply == null
+        ? text
+        : '> ${_quotePreview(reply.content, maxLen: 400)}\n\n$text';
+
+    provider.sendMessage(outgoing);
     _scrollToBottom();
+  }
+
+  String _quotePreview(String content, {int maxLen = 120}) {
+    final oneLine = content.trim().replaceAll('\n', ' ');
+    return oneLine.length > maxLen
+        ? '${oneLine.substring(0, maxLen)}…'
+        : oneLine;
   }
 
   @override
@@ -155,12 +182,16 @@ class _ChatScreenState extends State<ChatScreen> {
                         controller: _scrollCtrl,
                         padding: const EdgeInsets.symmetric(vertical: 12),
                         itemCount: provider.messages.length,
-                        itemBuilder: (_, i) =>
-                            ChatBubble(message: provider.messages[i]),
+                        itemBuilder: (_, i) => ChatBubble(
+                          message: provider.messages[i],
+                          onReply: _startReply,
+                        ),
                       ),
               ),
               // RAM indicator
               const RamIndicator(),
+              // Reply preview
+              if (_replyingTo != null) _replyPreview(_replyingTo!),
               // Input bar
               _inputBar(provider),
             ],
@@ -179,6 +210,55 @@ class _ChatScreenState extends State<ChatScreen> {
             Text(
               'Model loaded — start chatting!',
               style: TextStyle(color: AppTheme.textSecondary, fontSize: 14),
+            ),
+          ],
+        ),
+      );
+
+  Widget _replyPreview(ChatMessage message) => Container(
+        margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: AppTheme.bgSurface,
+          borderRadius: BorderRadius.circular(10),
+          border: Border(
+            left: BorderSide(color: AppTheme.accentAmber, width: 3),
+          ),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    message.role == 'user' ? 'Replying to yourself' : 'Replying to 🦙',
+                    style: const TextStyle(
+                      color: AppTheme.accentAmber,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _quotePreview(message.content),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppTheme.textSecondary,
+                      fontSize: 12.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close_rounded, size: 18),
+              color: AppTheme.textMuted,
+              onPressed: _cancelReply,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              splashRadius: 16,
             ),
           ],
         ),
@@ -232,13 +312,14 @@ class _ChatScreenState extends State<ChatScreen> {
                       color: AppTheme.textPrimary,
                       fontSize: 15,
                     ),
-                    decoration: const InputDecoration(
-                      hintText: 'Message...',
-                      hintStyle: TextStyle(color: AppTheme.textMuted),
+                    decoration: InputDecoration(
+                      hintText:
+                          _replyingTo != null ? 'Reply...' : 'Message...',
+                      hintStyle: const TextStyle(color: AppTheme.textMuted),
                       border: InputBorder.none,
                       enabledBorder: InputBorder.none,
                       focusedBorder: InputBorder.none,
-                      contentPadding: EdgeInsets.symmetric(
+                      contentPadding: const EdgeInsets.symmetric(
                         horizontal: 14,
                         vertical: 10,
                       ),

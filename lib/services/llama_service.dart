@@ -37,9 +37,18 @@ class LlamaService {
           numberOfThreadsBatch: threads,
         ),
       );
+      
+      // Wrap the multimodal projector load in its own try-catch block
+      // If loading the projector fails, the app falls back to standard text model execution
       if (mmprojPath != null && mmprojPath.trim().isNotEmpty) {
-        await _engine!.loadMultimodalProjector(mmprojPath.trim());
-        _loadedMmprojPath = mmprojPath.trim();
+        try {
+          await _engine!.loadMultimodalProjector(mmprojPath.trim());
+          _loadedMmprojPath = mmprojPath.trim();
+        } catch (projError) {
+          // Fall back gracefully rather than crashing the text loading sequence
+          print('LlamaService Warning: Incompatible or faulty multimodal projector: $projError. Loading as standard text LLM.');
+          _loadedMmprojPath = null;
+        }
       }
       _loadedPath = path;
       _status = ModelStatus.ready;
@@ -64,9 +73,7 @@ class LlamaService {
   }) async* {
     if (_engine == null || !isReady) throw StateError('Model not loaded');
     _stopRequested = false;
-
     final messages = <LlamaChatMessage>[];
-
     if (systemPrompt.isNotEmpty) {
       messages.add(LlamaChatMessage(role: 'system', content: systemPrompt));
     }
@@ -78,7 +85,6 @@ class LlamaService {
         );
       }
     }
-
     if (imagePath != null && imagePath.trim().isNotEmpty) {
       if (!hasVision) {
         throw StateError(
@@ -98,7 +104,6 @@ class LlamaService {
     } else {
       messages.add(LlamaChatMessage(role: 'user', content: userMessage));
     }
-
     final hasImage = imagePath != null && imagePath.trim().isNotEmpty;
     final params = GenerationParams(
       maxTokens: maxTokens,
@@ -108,7 +113,6 @@ class LlamaService {
       streamBatchTokenThreshold: 4,
       streamBatchByteThreshold: 256,
     );
-
     try {
       await for (final chunk in _engine!.create(
         messages,

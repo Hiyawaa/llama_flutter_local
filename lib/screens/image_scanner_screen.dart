@@ -19,7 +19,7 @@ class _ImageScannerScreenState extends State<ImageScannerScreen> {
   final _picker = ImagePicker();
   final _promptCtrl = TextEditingController(
     text:
-        'Analyze this image. If it contains a math problem, reconstruct it and solve it step by step using LaTeX.',
+        '',
   );
 
   String? _imagePath;
@@ -88,13 +88,36 @@ class _ImageScannerScreenState extends State<ImageScannerScreen> {
       return;
     }
 
+    final imgFile = File(path);
+    if (!await imgFile.exists()) {
+      _showSnack('Image file no longer exists at that path.');
+      return;
+    }
+
     final prompt = _promptCtrl.text.trim().isEmpty
         ? 'Describe this image.'
         : _promptCtrl.text.trim();
-    provider.sendMessage(prompt, imagePath: path);
+
+    // Navigate to chat first so the user sees progress, but no longer
+    // fire-and-forget: await the call and surface any error instead of
+    // failing silently (this was very likely why "nothing happens").
     if (!mounted) return;
     Navigator.popUntil(context, (route) => route.isFirst);
     Navigator.pushNamed(context, '/chat');
+
+    try {
+      await provider.sendMessage(prompt, imagePath: path);
+    } catch (e, st) {
+      debugPrint('sendMessage(imagePath: $path) failed: $e\n$st');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Generation failed: $e'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
   }
 
   void _showSnack(String message) {

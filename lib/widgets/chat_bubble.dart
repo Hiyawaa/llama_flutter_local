@@ -9,7 +9,8 @@ import 'code_canvas.dart';
 
 class ChatBubble extends StatelessWidget {
   final ChatMessage message;
-  const ChatBubble({super.key, required this.message});
+  final ValueChanged<ChatMessage>? onReply;
+  const ChatBubble({super.key, required this.message, this.onReply});
 
   bool get isUser => message.role == 'user';
 
@@ -28,7 +29,11 @@ class ChatBubble extends StatelessWidget {
             child: Column(
               crossAxisAlignment:
                   isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-              children: [_bubble(context), const SizedBox(height: 2), _time()],
+              children: [
+                _bubble(context),
+                const SizedBox(height: 2),
+                _footerRow(context),
+              ],
             ),
           ),
           const SizedBox(width: 8),
@@ -60,17 +65,19 @@ class ChatBubble extends StatelessWidget {
         ),
       );
 
+  void _copyAll(BuildContext context) {
+    Clipboard.setData(ClipboardData(text: message.content));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Copied'),
+        duration: Duration(seconds: 1),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
   Widget _bubble(BuildContext context) => GestureDetector(
-        onLongPress: () {
-          Clipboard.setData(ClipboardData(text: message.content));
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Copied'),
-              duration: Duration(seconds: 1),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        },
+        onLongPress: () => _copyAll(context),
         child: Container(
           constraints: BoxConstraints(
             maxWidth: MediaQuery.of(context).size.width * 0.85,
@@ -108,6 +115,36 @@ class ChatBubble extends StatelessWidget {
         ),
       );
 
+  /// Row shown under the bubble: timestamp plus small copy/reply actions.
+  /// Actions are hidden while the message is still streaming (nothing
+  /// useful to copy/reply to yet) and hidden for empty content.
+  Widget _footerRow(BuildContext context) {
+    final showActions = message.content.isNotEmpty && !message.isStreaming;
+
+    final children = <Widget>[
+      if (showActions) ...[
+        _ActionIcon(
+          icon: Icons.copy_rounded,
+          tooltip: 'Copy',
+          onTap: () => _copyAll(context),
+        ),
+        const SizedBox(width: 4),
+        _ActionIcon(
+          icon: Icons.reply_rounded,
+          tooltip: 'Reply',
+          onTap: onReply == null ? null : () => onReply!(message),
+        ),
+        const SizedBox(width: 6),
+      ],
+      _time(),
+    ];
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: isUser ? children.reversed.toList() : children,
+    );
+  }
+
   Widget _time() {
     final h = message.timestamp.hour.toString().padLeft(2, '0');
     final m = message.timestamp.minute.toString().padLeft(2, '0');
@@ -116,6 +153,30 @@ class ChatBubble extends StatelessWidget {
       style: const TextStyle(color: AppTheme.textMuted, fontSize: 10),
     );
   }
+}
+
+class _ActionIcon extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onTap;
+  const _ActionIcon({required this.icon, required this.tooltip, this.onTap});
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+        message: tooltip,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.all(3),
+            child: Icon(
+              icon,
+              size: 13,
+              color: AppTheme.textMuted,
+            ),
+          ),
+        ),
+      );
 }
 
 // ── User content (plain text, or a scanned-image card if detected) ──────────
