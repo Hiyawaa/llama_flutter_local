@@ -89,7 +89,12 @@ class HFFile {
 
   // FIX: GGUF files are stored with Git LFS.
   // The top-level 'size' in siblings is the LFS *pointer* size (~130 bytes),
-  // NOT the actual file size. The real size lives in siblings[].lfs.size.
+  // NOT the actual file size. The real size lives in siblings[].lfs.size —
+  // but that 'lfs' object is only present in the API response at all if the
+  // request explicitly asked for it (see getModelFiles's blobs=true below).
+  // Without that, every file here silently has no size info whatsoever,
+  // not just a wrong one — which is why every file was showing "Unknown
+  // size" regardless of what it actually was.
   factory HFFile.fromJson(Map<String, dynamic> j) {
     final lfs = j['lfs'] as Map<String, dynamic>?;
     final lfsSize = (lfs?['size'] as num?)?.toInt();
@@ -161,7 +166,14 @@ class HuggingFaceService {
   }
 
   Future<List<HFFile>> getModelFiles(String modelId) async {
-    final uri = Uri.parse('$_apiBase/models/$modelId');
+    // FIX: 'blobs=true' is required for the Hub API to include each
+    // sibling's 'lfs' object (which carries the real byte size). Without
+    // it, siblings come back as bare {"rfilename": "..."} with no size
+    // field at all — that's the actual root cause of every file always
+    // showing "Unknown size" regardless of its real size.
+    final uri = Uri.parse('$_apiBase/models/$modelId').replace(
+      queryParameters: {'blobs': 'true'},
+    );
     final response = await _client.get(uri, headers: {
       'Accept': 'application/json'
     }).timeout(const Duration(seconds: 15));
@@ -173,11 +185,51 @@ class HuggingFaceService {
     final data = jsonDecode(response.body) as Map<String, dynamic>;
     final siblings = data['siblings'] as List<dynamic>? ?? [];
 
-    return siblings
+    var files = siblings
         .map((f) => HFFile.fromJson(f as Map<String, dynamic>))
         .where((f) => f.isGguf)
         .toList()
       ..sort((a, b) => a.filename.compareTo(b.filename));
+
+    // Defensive fallback: if the Hub ever changes behavior and blobs=true
+    // stops returning lfs data (or the repo's files aren't stored via LFS
+    // for some reason), fetch each file's real size individually via a
+    // HEAD request rather than silently showing "Unknown size" for
+    // everything. This only fires for files that still came back with
+    // size <= 0 after the primary request, so it doesn't add overhead in
+    // the normal case.
+    final missingSizes = files.where((f) => f.size <= 0).toList();
+    if (missingSizes.isNotEmpty) {
+      final resolved = await Future.wait(missingSizes.map((f) async {
+        final size = await _headSize(modelId, f.rfilename);
+        return size > 0
+            ? HFFile(filename: f.filename, rfilename: f.rfilename, size: size)
+            : f;
+      }));
+      final byName = {for (final f in resolved) f.filename: f};
+      files = files.map((f) => byName[f.filename] ?? f).toList();
+    }
+
+    return files;
+  }
+
+  /// Resolves a file's real size via a HEAD request's Content-Length,
+  /// following redirects (the resolve/main URL 302s to the actual CDN
+  /// blob URL, which is where Content-Length reflects the true file
+  /// size for LFS-backed files).
+  Future<int> _headSize(String modelId, String rfilename) async {
+    try {
+      final url = '$_base/$modelId/resolve/main/$rfilename';
+      final request = http.Request('HEAD', Uri.parse(url))
+        ..followRedirects = true;
+      final response =
+          await _client.send(request).timeout(const Duration(seconds: 10));
+      // Drain the (empty) response stream so the connection is released.
+      await response.stream.drain();
+      return response.contentLength ?? 0;
+    } catch (_) {
+      return 0;
+    }
   }
 
   Stream<DownloadProgress> downloadFile(String modelId, HFFile file) async* {

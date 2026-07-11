@@ -34,6 +34,64 @@ const _langColors = {
 Color _colorForLang(String lang) =>
     _langColors[lang.toLowerCase()] ?? AppTheme.accentAmber;
 
+// ── Syntax highlighting ───────────────────────────────────────────────────────
+//
+// Lightweight, language-agnostic tokenizer: comments / strings / numbers /
+// a broad common-keyword set covering most C-like, Python, and scripting
+// languages reasonably well. Not a full per-language grammar, but gives
+// useful color differentiation ("make it interactive"-feeling) without
+// pulling in a heavy highlighting package.
+
+final RegExp _tokenPattern = RegExp(
+  r'''(//[^\n]*|#[^\n]*|/\*[\s\S]*?\*/)'''
+  r'''|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)'''
+  r'''|(\b\d+\.?\d*\b)'''
+  r'''|(\b(?:if|else|elif|for|while|do|switch|case|default|break|continue|return|function|fn|def|class|struct|enum|impl|trait|mod|import|from|export|const|let|var|public|private|protected|static|final|void|int|long|float|double|bool|boolean|char|string|String|str|true|false|null|nil|None|new|this|self|try|catch|except|finally|throw|throws|async|await|package|namespace|using|include|typedef|extends|implements|interface|abstract|super|instanceof|in|is|as|match|yield|lambda|with|del|global|nonlocal|assert|pass|then|mut|unsafe|where|type|typeof|end|proc|begin)\b)''',
+);
+
+List<TextSpan> _highlightCode(String code, Color keywordColor) {
+  const commentColor = Color(0xFF6A9955);
+  const stringColor = Color(0xFFCE9178);
+  const numberColor = Color(0xFFB5CEA8);
+
+  final spans = <TextSpan>[];
+  int last = 0;
+
+  for (final m in _tokenPattern.allMatches(code)) {
+    if (m.start > last) {
+      spans.add(TextSpan(text: code.substring(last, m.start)));
+    }
+
+    Color color;
+    FontStyle fontStyle = FontStyle.normal;
+    FontWeight weight = FontWeight.normal;
+
+    if (m.group(1) != null) {
+      color = commentColor;
+      fontStyle = FontStyle.italic;
+    } else if (m.group(2) != null) {
+      color = stringColor;
+    } else if (m.group(3) != null) {
+      color = numberColor;
+    } else {
+      color = keywordColor;
+      weight = FontWeight.w600;
+    }
+
+    spans.add(TextSpan(
+      text: m.group(0),
+      style: TextStyle(color: color, fontStyle: fontStyle, fontWeight: weight),
+    ));
+    last = m.end;
+  }
+
+  if (last < code.length) {
+    spans.add(TextSpan(text: code.substring(last)));
+  }
+
+  return spans;
+}
+
 // ── Parse code blocks from markdown ──────────────────────────────────────────
 
 class CodeBlock {
@@ -141,16 +199,19 @@ class _CodeCanvasSheetState extends State<_CodeCanvasSheet> {
                 const Spacer(),
 
                 // Font size controls
+                // FIX: floor was 10, which meant "zoom out" could never go
+                // below a fairly large size. Lowered to 4 so the code can
+                // actually be zoomed out much further.
                 _HeaderBtn(
                   icon: Icons.text_decrease_rounded,
                   onTap: () =>
-                      setState(() => _fontSize = (_fontSize - 1).clamp(10, 20)),
+                      setState(() => _fontSize = (_fontSize - 1).clamp(4, 20)),
                   tooltip: 'Decrease font',
                 ),
                 _HeaderBtn(
                   icon: Icons.text_increase_rounded,
                   onTap: () =>
-                      setState(() => _fontSize = (_fontSize + 1).clamp(10, 20)),
+                      setState(() => _fontSize = (_fontSize + 1).clamp(4, 20)),
                   tooltip: 'Increase font',
                 ),
 
@@ -231,13 +292,16 @@ class _CodeCanvasSheetState extends State<_CodeCanvasSheet> {
                         fontSize: _fontSize,
                         langColor: langColor,
                       )
-                    : SelectableText(
-                        widget.block.code,
-                        style: TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: _fontSize,
-                          color: AppTheme.textPrimary,
-                          height: 1.55,
+                    : SelectableText.rich(
+                        TextSpan(
+                          style: TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: _fontSize,
+                            color: AppTheme.textPrimary,
+                            height: 1.55,
+                          ),
+                          children:
+                              _highlightCode(widget.block.code, langColor),
                         ),
                       ),
               ),
@@ -302,13 +366,15 @@ class _CodeWithLineNumbers extends StatelessWidget {
 
         // Code
         Expanded(
-          child: SelectableText(
-            lines.join('\n'),
-            style: TextStyle(
-              fontFamily: 'monospace',
-              fontSize: fontSize,
-              color: AppTheme.textPrimary,
-              height: 1.55,
+          child: SelectableText.rich(
+            TextSpan(
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: fontSize,
+                color: AppTheme.textPrimary,
+                height: 1.55,
+              ),
+              children: _highlightCode(lines.join('\n'), langColor),
             ),
           ),
         ),
@@ -413,13 +479,18 @@ class CodeBlockCard extends StatelessWidget {
             // Code preview
             Padding(
               padding: const EdgeInsets.all(12),
-              child: Text(
-                hasMore ? '$preview\n…' : preview,
-                style: const TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 12.5,
-                  color: AppTheme.textPrimary,
-                  height: 1.5,
+              child: Text.rich(
+                TextSpan(
+                  style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 12.5,
+                    color: AppTheme.textPrimary,
+                    height: 1.5,
+                  ),
+                  children: _highlightCode(
+                    hasMore ? '$preview\n…' : preview,
+                    langColor,
+                  ),
                 ),
                 maxLines: 7,
                 overflow: TextOverflow.fade,

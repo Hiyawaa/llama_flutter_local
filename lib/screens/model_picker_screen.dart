@@ -7,6 +7,7 @@ import '../models/app_theme.dart';
 import '../models/chat_provider.dart';
 import '../services/llama_service.dart' show ModelStatus;
 import '../services/huggingface_service.dart';
+import 'huggingface_screen.dart';
 
 class ModelPickerScreen extends StatefulWidget {
   const ModelPickerScreen({super.key});
@@ -701,6 +702,48 @@ class _StatusCard extends StatelessWidget {
 class _HintBox extends StatelessWidget {
   const _HintBox();
 
+  static const _recommendations = [
+    _Recommendation(
+      name: 'Qwen2.5-Math-1.5B',
+      note: 'best for math',
+      size: '~1 GB',
+    ),
+    _Recommendation(
+      name: 'Phi-3-mini-Q4_K_M',
+      note: 'fast & smart',
+      size: '~2.3 GB',
+    ),
+    _Recommendation(
+      name: 'Llama-3.2-3B-Q4_K_M',
+      note: 'great all-rounder',
+      size: '~2 GB',
+    ),
+    // ── Vision-language models (VLM) ──────────────────────────────────
+    // These need TWO files to work: the main gguf plus a matching mmproj
+    // gguf (the vision projector/encoder weights). We don't need to
+    // search for the mmproj separately — HuggingFaceScreen's
+    // _ModelFilesScreen already lists every file in a repo (including
+    // mmproj, in its own "Vision file (required for images)" section with
+    // a banner) once the person opens the repo that this search lands on.
+    // mmprojName/mmprojSize here are just for display on this tile.
+    _Recommendation(
+      name: 'Qwen2-VL-2B-Instruct',
+      note: 'vision + text, compact',
+      size: '~1.5 GB',
+      isVLM: true,
+      mmprojName: 'mmproj-Qwen2-VL-2B',
+      mmprojSize: '~600 MB',
+    ),
+    _Recommendation(
+      name: 'LLaVA-Phi-3-mini',
+      note: 'vision + text, fast',
+      size: '~2.4 GB',
+      isVLM: true,
+      mmprojName: 'mmproj-LLaVA-Phi-3-mini',
+      mmprojSize: '~600 MB',
+    ),
+  ];
+
   @override
   Widget build(BuildContext context) => Container(
         padding: const EdgeInsets.all(14),
@@ -709,10 +752,10 @@ class _HintBox extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: AppTheme.borderColor),
         ),
-        child: const Column(
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
+            const Text(
               '💡 Recommended for Android',
               style: TextStyle(
                 color: AppTheme.textPrimary,
@@ -720,12 +763,13 @@ class _HintBox extends StatelessWidget {
                 fontWeight: FontWeight.w600,
               ),
             ),
-            SizedBox(height: 8),
-            Text(
-              '• Qwen2.5-Math-1.5B — best for math (~1 GB)\n'
-              '• Phi-3-mini-Q4_K_M — fast & smart (~2.3 GB)\n'
-              '• Llama-3.2-3B-Q4_K_M — great all-rounder (~2 GB)\n'
-              '• Q4_K_M = best speed/quality balance',
+            const SizedBox(height: 10),
+            ..._recommendations.map(
+              (r) => _RecommendationTile(recommendation: r),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Q4_K_M = best speed/quality balance',
               style: TextStyle(
                 color: AppTheme.textSecondary,
                 fontSize: 12,
@@ -733,6 +777,141 @@ class _HintBox extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      );
+}
+
+class _Recommendation {
+  final String name;
+  final String note;
+  final String size;
+  final bool isVLM;
+  final String? mmprojName;
+  final String? mmprojSize;
+
+  const _Recommendation({
+    required this.name,
+    required this.note,
+    required this.size,
+    this.isVLM = false,
+    this.mmprojName,
+    this.mmprojSize,
+  });
+}
+
+class _RecommendationTile extends StatelessWidget {
+  final _Recommendation recommendation;
+  const _RecommendationTile({required this.recommendation});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: AppTheme.bgBase,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => HuggingFaceScreen(
+                initialQuery: recommendation.name,
+              ),
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              recommendation.name,
+                              style: const TextStyle(
+                                color: AppTheme.textPrimary,
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (recommendation.isVLM) ...[
+                            const SizedBox(width: 6),
+                            _VLMBadge(),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${recommendation.note} · ${recommendation.size}',
+                        style: const TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 11,
+                        ),
+                      ),
+                      if (recommendation.mmprojName != null) ...[
+                        const SizedBox(height: 3),
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.visibility_rounded,
+                              size: 11,
+                              color: AppTheme.accentBlue,
+                            ),
+                            const SizedBox(width: 3),
+                            Expanded(
+                              child: Text(
+                                '+ ${recommendation.mmprojName} (${recommendation.mmprojSize})',
+                                style: const TextStyle(
+                                  color: AppTheme.accentBlue,
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: AppTheme.textMuted,
+                  size: 18,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _VLMBadge extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        decoration: BoxDecoration(
+          color: AppTheme.accentBlue.withAlpha(30),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: AppTheme.accentBlue.withAlpha(90)),
+        ),
+        child: const Text(
+          'VLM',
+          style: TextStyle(
+            color: AppTheme.accentBlue,
+            fontSize: 9,
+            fontWeight: FontWeight.w700,
+          ),
         ),
       );
 }
