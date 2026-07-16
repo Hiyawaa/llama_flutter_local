@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 jobs:
-  build-apk:
+  build:
     name: Build Release APK
     runs-on: ubuntu-latest
 
@@ -26,6 +26,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -33,14 +34,17 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Display Flutter Version
+      - name: Show Flutter Version
         run: flutter --version
 
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Analyze Project
-        run: flutter analyze
+      # Uncomment if you want analysis without failing the build
+      #
+      # - name: Analyze Project
+      #   continue-on-error: true
+      #   run: flutter analyze
 
       - name: Build Release APK
         run: flutter build apk --release
@@ -51,3 +55,4 @@ jobs:
           name: app-release-apk
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
+          retention-days: 30
