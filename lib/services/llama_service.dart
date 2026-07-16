@@ -75,13 +75,24 @@ class LlamaService {
     _stopRequested = false;
     final messages = <LlamaChatMessage>[];
     if (systemPrompt.isNotEmpty) {
-      messages.add(LlamaChatMessage(role: 'system', content: systemPrompt));
+      messages.add(
+        LlamaChatMessage.fromText(
+          role: LlamaChatRole.system,
+          text: systemPrompt,
+        ),
+      );
     }
     for (final h in history) {
       final content = h['content'] ?? '';
       if (content.isNotEmpty) {
+        final role = (h['role'] ?? 'user').toLowerCase();
+        final llamaRole = role == 'assistant'
+            ? LlamaChatRole.assistant
+            : role == 'system'
+                ? LlamaChatRole.system
+                : LlamaChatRole.user;
         messages.add(
-          LlamaChatMessage(role: h['role'] ?? 'user', content: content),
+          LlamaChatMessage.fromText(role: llamaRole, text: content),
         );
       }
     }
@@ -102,7 +113,12 @@ class LlamaService {
         ),
       );
     } else {
-      messages.add(LlamaChatMessage(role: 'user', content: userMessage));
+      messages.add(
+        LlamaChatMessage.fromText(
+          role: LlamaChatRole.user,
+          text: userMessage,
+        ),
+      );
     }
     final hasImage = imagePath != null && imagePath.trim().isNotEmpty;
     final params = GenerationParams(
@@ -110,8 +126,23 @@ class LlamaService {
       temp: temperature,
       topP: topP,
       penalty: repeatPenalty,
+      topK: 40,
+      minP: 0.05,
       streamBatchTokenThreshold: 4,
       streamBatchByteThreshold: 256,
+      // Different GGUF chat templates use different end-of-turn markers.
+      // Only matching Llama-3 tokens means models built on ChatML, Gemma,
+      // Mistral, or Phi templates never see a stop match and keep
+      // generating past their answer (rambling, or hallucinating a new
+      // "User:" turn). Listing all common ones is harmless for models
+      // that don't use them — unmatched strings simply never trigger.
+      stopSequences: const [
+        '<|eot_id|>', '<|end_of_text|>', // Llama 3.x
+        '<|im_end|>', // ChatML / Qwen
+        '<end_of_turn>', // Gemma
+        '</s>', // Mistral / Llama 2
+        '<|end|>', '<|endoftext|>', // Phi
+      ],
     );
     try {
       await for (final chunk in _engine!.create(
@@ -123,8 +154,14 @@ class LlamaService {
         final content = chunk.choices.firstOrNull?.delta.content;
         if (content != null && content.isNotEmpty) yield content;
       }
-    } catch (_) {
+    } catch (e) {
       if (hasImage) rethrow;
+      // Surface why the templated chat call failed instead of silently
+      // degrading — otherwise "the AI response looks wrong" is
+      // undiagnosable, since this fallback skips the model's chat
+      // template entirely and free-hands a plain-text prompt.
+      print('LlamaService Warning: engine.create failed, falling back to '
+          'raw completion: $e');
       final buf = StringBuffer();
       if (systemPrompt.isNotEmpty) buf.writeln(systemPrompt);
       for (final h in history) {
@@ -133,9 +170,28 @@ class LlamaService {
         if (content.isNotEmpty) buf.writeln('$role: $content');
       }
       buf.write('User: $userMessage\nAssistant:');
+      final rawParams = GenerationParams(
+        maxTokens: maxTokens,
+        temp: temperature,
+        topP: topP,
+        penalty: repeatPenalty,
+        topK: 40,
+        minP: 0.05,
+        streamBatchTokenThreshold: 4,
+        streamBatchByteThreshold: 256,
+        // This path has no chat template, so the model is prone to
+        // inventing a new "User:" turn and answering itself. Cut it off
+        // there in addition to the token-based stops above.
+        stopSequences: const [
+          '<|eot_id|>', '<|end_of_text|>',
+          '<|im_end|>', '<end_of_turn>', '</s>',
+          '<|end|>', '<|endoftext|>',
+          '\nUser:', '\nUser :',
+        ],
+      );
       await for (final token in _engine!.generate(
         buf.toString(),
-        params: params,
+        params: rawParams,
       )) {
         if (_stopRequested) break;
         yield token;

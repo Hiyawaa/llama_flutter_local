@@ -548,6 +548,58 @@ class _MathMatch {
   });
 }
 
+bool looksLikeLatexLine(String line) {
+  final trimmed = line.trim();
+  if (trimmed.isEmpty || trimmed.startsWith('#') || trimmed.startsWith('>')) {
+    return false;
+  }
+
+  final candidate = trimmed.replaceFirst(
+    RegExp(r'^(?:[-*+]|\d+[.)])\s+'),
+    '',
+  ).trim();
+
+  if (candidate.isEmpty) return false;
+  if (candidate.startsWith('**') || candidate.startsWith('*')) return false;
+
+  final hasLatexCommand = RegExp(r'\\[A-Za-z]+').hasMatch(candidate);
+  final hasMathSymbol = RegExp(r'[=+\-*/^_{}]').hasMatch(candidate);
+  final hasMathKeyword = RegExp(
+    r'\\(?:frac|sqrt|int|sum|lim|begin|end|left|right|cdot|times|pm|neq|le|ge|alpha|beta|gamma|delta|theta|phi|psi|omega)',
+  ).hasMatch(candidate);
+
+  if (hasLatexCommand && (hasMathSymbol || hasMathKeyword)) return true;
+  if (RegExp(r'^[A-Za-z0-9_]+\s*[=<>]').hasMatch(candidate) &&
+      !RegExp(r'^[A-Z][a-z]{2,}\b').hasMatch(candidate)) {
+    return true;
+  }
+
+  return false;
+}
+
+bool looksLikeDisplayMathBlock(String text) {
+  final trimmed = text.trim();
+  if (trimmed.isEmpty) return false;
+  if (trimmed.startsWith(r'$$') || trimmed.startsWith(r'\[')) return true;
+
+  if (RegExp(
+        r'\\begin\{(aligned|align|gathered|gather|array|cases|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|equation)\}',
+      ).hasMatch(trimmed)) {
+    return true;
+  }
+
+  if (trimmed.contains('\\') && (trimmed.contains('&') || trimmed.contains('='))) {
+    return true;
+  }
+
+  if (trimmed.contains('\n') &&
+      (trimmed.contains('=') || RegExp(r'\\[A-Za-z]+').hasMatch(trimmed))) {
+    return true;
+  }
+
+  return false;
+}
+
 class _MixedContentView extends StatelessWidget {
   final String content;
   const _MixedContentView({required this.content});
@@ -621,7 +673,9 @@ class _MixedContentView extends StatelessWidget {
   String _normalizeLatex(String latex) {
     var normalized = latex.trim();
     normalized = normalized
-        .replaceAll('\$', '')
+        // Strip only unescaped $ (delimiter markers), never \$ (a literal
+        // dollar sign, e.g. inside \text{Total: \$20}).
+        .replaceAll(RegExp(r'(?<!\\)\$'), '')
         .replaceAll(RegExp(r'\\begin\{align\*?\}'), r'\begin{aligned}')
         .replaceAll(RegExp(r'\\end\{align\*?\}'), r'\end{aligned}')
         .replaceAll(RegExp(r'\\begin\{gather\*?\}'), r'\begin{gathered}')
@@ -692,20 +746,31 @@ class _MixedContentView extends StatelessWidget {
         ),
       );
     }
+
+    final isMultiline = normalized.contains(r'\\') || normalized.contains('\n');
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      child: SizedBox(
+      child: Container(
         width: double.infinity,
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Align(
-            alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppTheme.bgBase.withAlpha((0.35 * 255).round()),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: AppTheme.borderColor.withAlpha((0.55 * 255).round()),
+          ),
+        ),
+        child: Align(
+          alignment: Alignment.center,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
             child: Math.tex(
               normalized,
               mathStyle: MathStyle.display,
-              textStyle: const TextStyle(
+              textStyle: TextStyle(
                 color: AppTheme.textPrimary,
-                fontSize: 16,
+                fontSize: isMultiline ? 15 : 16,
+                height: isMultiline ? 1.35 : 1.4,
               ),
               onErrorFallback: (_) => _mathFallback(normalized),
             ),
@@ -716,6 +781,10 @@ class _MixedContentView extends StatelessWidget {
   }
 
   Widget _inlineSegment(String text) {
+    if (looksLikeDisplayMathBlock(text)) {
+      return _blockMath(_normalizeLatex(text));
+    }
+
     final lines = text.split('\n');
     if (lines.length > 1 &&
         lines.any(
@@ -834,7 +903,7 @@ class _MixedContentView extends StatelessWidget {
   bool _isBareEquationLine(String line) {
     final trimmed = line.trim();
     if (trimmed.isEmpty || _mathOnlyLine.hasMatch(trimmed)) return false;
-    if (trimmed.startsWith('#') || trimmed.startsWith('>')) return false;
+    if (looksLikeLatexLine(trimmed)) return true;
 
     final candidate =
         trimmed.replaceFirst(RegExp(r'^(?:[-*+]|\d+[.)])\s+'), '').trim();
@@ -887,7 +956,7 @@ class _MixedContentView extends StatelessWidget {
   String _sanitizeBareEquation(String line) {
     var latex = line.trim();
     latex = latex.replaceFirst(RegExp(r'^(?:[-*+]|\d+[.)])\s+'), '').trim();
-    latex = latex.replaceAll('\$', '');
+    latex = latex.replaceAll(RegExp(r'(?<!\\)\$'), '');
     latex = latex.replaceAll(RegExp(r'\s*\\\\+\s*$'), '');
     latex = latex.replaceAll(RegExp(r'\s+'), ' ');
 

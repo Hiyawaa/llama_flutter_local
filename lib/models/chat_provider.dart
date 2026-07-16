@@ -32,6 +32,9 @@ class ChatProvider extends ChangeNotifier {
   static const int _defaultContextSize = 2048;
   static const int _defaultThreads = 0;
   static const int _streamNotifyMs = 40;
+  static const double _defaultTemperature = 0.2;
+  static const double _defaultTopP = 0.9;
+  static const double _defaultRepeatPenalty = 1.05;
 
   final LlamaService _llama = LlamaService();
   final ChatHistoryService _history = ChatHistoryService();
@@ -43,10 +46,10 @@ class ChatProvider extends ChangeNotifier {
   DateTime? _sessionStart;
 
   String _systemPrompt = '';
-  double _temperature = 0.7;
+  double _temperature = _defaultTemperature;
   int _maxTokens = _defaultMaxTokens;
-  double _topP = 0.95;
-  double _repeatPenalty = 1.1;
+  double _topP = _defaultTopP;
+  double _repeatPenalty = _defaultRepeatPenalty;
   int _contextSize = _defaultContextSize;
   int _threads = _defaultThreads;
 
@@ -332,10 +335,18 @@ When answering mathematics, use clean Markdown plus LaTeX:
   Future<void> _loadSettings() async {
     final p = await SharedPreferences.getInstance();
     _systemPrompt = p.getString('systemPrompt') ?? '';
-    _temperature = p.getDouble('temperature') ?? 0.7;
+    final savedTemperature = p.getDouble('temperature');
+    final savedTopP = p.getDouble('topP');
+    final savedRepeatPenalty = p.getDouble('repeatPenalty');
+
+    _temperature = savedTemperature == null || savedTemperature == 0.7
+        ? _defaultTemperature
+        : savedTemperature;
     _maxTokens = p.getInt('maxTokens') ?? _defaultMaxTokens;
-    _topP = p.getDouble('topP') ?? 0.95;
-    _repeatPenalty = p.getDouble('repeatPenalty') ?? 1.1;
+    _topP = savedTopP == null || savedTopP == 0.95 ? _defaultTopP : savedTopP;
+    _repeatPenalty = savedRepeatPenalty == null || savedRepeatPenalty == 1.1
+        ? _defaultRepeatPenalty
+        : savedRepeatPenalty;
     _contextSize = p.getInt('contextSize') ?? _defaultContextSize;
     _threads = p.getInt('threads') ?? _defaultThreads;
     notifyListeners();
