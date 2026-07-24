@@ -1,8 +1,7 @@
 import 'dart:async';
-import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../models/app_theme.dart';
+import '../services/ram_guard_service.dart';
 
 class RamIndicator extends StatefulWidget {
   const RamIndicator({super.key});
@@ -12,8 +11,7 @@ class RamIndicator extends StatefulWidget {
 }
 
 class _RamIndicatorState extends State<RamIndicator> {
-  int _availableKb = 0;
-  int _totalKb = 0;
+  RamSnapshot _snapshot = RamSnapshot.empty;
   Timer? _timer;
 
   @override
@@ -30,79 +28,19 @@ class _RamIndicatorState extends State<RamIndicator> {
   }
 
   Future<void> _read() async {
-    try {
-      // /proc/meminfo is available on Android (Linux kernel)
-      final lines = await File('/proc/meminfo').readAsLines();
-
-      int total = 0;
-      int memAvailable = 0;
-      int memFree = 0;
-      int buffers = 0;
-      int cached = 0;
-      bool hasMemAvailable = false;
-
-      for (final line in lines) {
-        final parts = line.split(':');
-        if (parts.length != 2) continue;
-        final key = parts[0].trim();
-        final kb =
-            int.tryParse(parts[1].trim().split(RegExp(r'\s+')).first) ?? 0;
-
-        switch (key) {
-          case 'MemTotal':
-            total = kb;
-            break;
-          case 'MemAvailable':
-            memAvailable = kb;
-            hasMemAvailable = true;
-            break;
-          case 'MemFree':
-            memFree = kb;
-            break;
-          case 'Buffers':
-            buffers = kb;
-            break;
-          case 'Cached':
-            cached = kb;
-            break;
-        }
-      }
-
-      // Some kernels (older / custom ROMs) don't expose MemAvailable.
-      // Fall back to the classic free+buffers+cached approximation so the
-      // bar doesn't get stuck pinned at 100%.
-      final available =
-          hasMemAvailable ? memAvailable : (memFree + buffers + cached);
-
-      if (total == 0) {
-        // Couldn't parse anything meaningful — skip this tick rather than
-        // showing a bogus 0/0 state.
-        return;
-      }
-
-      if (mounted) {
-        setState(() {
-          _totalKb = total;
-          _availableKb = available;
-        });
-      }
-    } catch (e) {
-      // Not on Android / permission denied — log so it's visible in debug
-      // instead of failing silently forever.
-      if (kDebugMode) {
-        debugPrint('RamIndicator: failed to read /proc/meminfo: $e');
-      }
+    final snap = await RamGuard.read();
+    if (mounted && snap.totalKb != 0) {
+      setState(() => _snapshot = snap);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_totalKb == 0) return const SizedBox.shrink();
+    if (_snapshot.totalKb == 0) return const SizedBox.shrink();
 
-    final usedKb = _totalKb - _availableKb;
-    final fraction = (usedKb / _totalKb).clamp(0.0, 1.0);
-    final availableGb = _availableKb / (1024 * 1024);
-    final totalGb = _totalKb / (1024 * 1024);
+    final fraction = _snapshot.fraction;
+    final availableGb = _snapshot.availableGb;
+    final totalGb = _snapshot.totalGb;
 
     // Color shifts green → amber → red as RAM fills up
     final Color barColor;

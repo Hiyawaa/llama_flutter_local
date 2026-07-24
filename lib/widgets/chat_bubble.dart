@@ -5,6 +5,7 @@ import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import '../models/app_theme.dart';
 import '../models/chat_provider.dart';
+import '../services/tool_service.dart';
 import 'code_canvas.dart';
 
 class ChatBubble extends StatelessWidget {
@@ -101,17 +102,33 @@ class ChatBubble extends StatelessWidget {
               ? const _TypingDots()
               : isUser
                   ? _UserContent(
-                      content: message.content, imagePath: message.imagePath)
-                  : message.isStreaming
-                      ? SelectableText(
-                          message.content,
-                          style: const TextStyle(
-                            color: AppTheme.textPrimary,
-                            fontSize: 14.5,
-                            height: 1.6,
-                          ),
-                        )
-                      : _FullRender(content: message.content),
+                      content: message.content, imagePaths: message.imagePaths)
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (message.usedFallback && !message.isStreaming)
+                          _FallbackWarningBanner(),
+                        if (message.usedFallback && !message.isStreaming)
+                          const SizedBox(height: 8),
+                        if (message.toolCall != null)
+                          _ToolCallCard(call: message.toolCall!),
+                        if (message.toolCall != null &&
+                            message.content.isNotEmpty)
+                          const SizedBox(height: 8),
+                        if (message.content.isNotEmpty)
+                          message.isStreaming
+                              ? SelectableText(
+                                  message.content,
+                                  style: const TextStyle(
+                                    color: AppTheme.textPrimary,
+                                    fontSize: 14.5,
+                                    height: 1.6,
+                                  ),
+                                )
+                              : _FullRender(content: message.content),
+                      ],
+                    ),
         ),
       );
 
@@ -120,6 +137,7 @@ class ChatBubble extends StatelessWidget {
   /// useful to copy/reply to yet) and hidden for empty content.
   Widget _footerRow(BuildContext context) {
     final showActions = message.content.isNotEmpty && !message.isStreaming;
+    final metrics = message.metrics;
 
     final children = <Widget>[
       if (showActions) ...[
@@ -133,6 +151,20 @@ class ChatBubble extends StatelessWidget {
           icon: Icons.reply_rounded,
           tooltip: 'Reply',
           onTap: onReply == null ? null : () => onReply!(message),
+        ),
+        const SizedBox(width: 6),
+      ],
+      // Feature 5: tokens/sec + gen time, shown only for finished
+      // assistant turns (metrics aren't meaningful for user messages or
+      // while still streaming, since elapsed time isn't final yet).
+      if (!isUser && metrics != null && !message.isStreaming) ...[
+        Icon(Icons.speed_rounded,
+            size: 10, color: AppTheme.textMuted.withAlpha(180)),
+        const SizedBox(width: 3),
+        Text(
+          metrics.label,
+          style: TextStyle(
+              color: AppTheme.textMuted.withAlpha(180), fontSize: 9.5),
         ),
         const SizedBox(width: 6),
       ],
@@ -255,12 +287,12 @@ _ScanContext? _parseScanContext(String content) {
 
 class _UserContent extends StatelessWidget {
   final String content;
-  final String? imagePath;
-  const _UserContent({required this.content, this.imagePath});
+  final List<String> imagePaths;
+  const _UserContent({required this.content, this.imagePaths = const []});
 
   @override
   Widget build(BuildContext context) {
-    final image = imagePath;
+    final images = imagePaths.where((p) => p.isNotEmpty).toList();
     final scan = _parseScanContext(content);
     final text = scan == null
         ? SelectableText(
@@ -273,23 +305,165 @@ class _UserContent extends StatelessWidget {
           )
         : _ScannedImageContent(scan: scan);
 
-    if (image == null || image.isEmpty) return text;
+    if (images.isEmpty) return text;
+
+    // Feature 4 (Multi-Turn Vision): a single image keeps the original
+    // larger preview; multiple images collapse to a compact scrollable
+    // thumbnail row so the bubble doesn't balloon vertically when someone
+    // attaches several photos at once.
+    final imageRow = images.length == 1
+        ? ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: Image.file(
+              File(images.first),
+              width: 220,
+              height: 150,
+              fit: BoxFit.cover,
+            ),
+          )
+        : SizedBox(
+            height: 90,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: images.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 6),
+              itemBuilder: (_, i) => ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Image.file(
+                  File(images[i]),
+                  width: 90,
+                  height: 90,
+                  fit: BoxFit.cover,
+                ),
+              ),
+            ),
+          );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(10),
-          child: Image.file(
-            File(image),
-            width: 220,
-            height: 150,
-            fit: BoxFit.cover,
-          ),
-        ),
+        imageRow,
         const SizedBox(height: 8),
         text,
       ],
+    );
+  }
+}
+
+// ── Fallback-mode warning banner ─────────────────────────────────────────────
+
+/// Shown when a turn had to skip the model's chat template and fall back
+/// to a hand-built raw completion prompt. This is the single most useful
+/// diagnostic signal for "why does this model's output look garbled /
+/// run-on / repetitive" — before this existed, that fallback happened
+/// silently and only logged to the debug console, which is invisible to
+/// anyone just using the app.
+class _FallbackWarningBanner extends StatelessWidget {
+  const _FallbackWarningBanner();
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: AppTheme.accentAmber.withAlpha(20),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppTheme.accentAmber.withAlpha(60)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.warning_amber_rounded,
+                size: 13, color: AppTheme.accentAmber),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                'This model\'s chat template failed — response used a raw '
+                'fallback prompt and may be lower quality than usual.',
+                style: TextStyle(
+                    color: AppTheme.accentAmber.withAlpha(220), fontSize: 10.5),
+              ),
+            ),
+          ],
+        ),
+      );
+}
+
+/// Shows a compact card for a model-initiated tool call: which tool, what
+/// arguments, and (once available) the result. Renders as a lightweight
+/// pending state first (spinner) so the user sees something happened
+/// between "the model went quiet" and "here's the answer" rather than a
+/// confusing gap.
+class _ToolCallCard extends StatelessWidget {
+  final ToolCallResult call;
+  const _ToolCallCard({required this.call});
+
+  @override
+  Widget build(BuildContext context) {
+    final pending = call.result == null && call.error == null;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppTheme.bgBase.withAlpha((0.5 * 255).round()),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+            color: AppTheme.accentBlue.withAlpha((0.3 * 255).round())),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.build_circle_outlined,
+                  size: 14, color: AppTheme.accentBlue),
+              const SizedBox(width: 6),
+              Text(
+                call.name,
+                style: const TextStyle(
+                  color: AppTheme.accentBlue,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 6),
+              if (pending)
+                const SizedBox(
+                  width: 10,
+                  height: 10,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 1.5, color: AppTheme.accentBlue),
+                ),
+            ],
+          ),
+          if (call.arguments.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              call.arguments.entries
+                  .map((e) => '${e.key}: ${e.value}')
+                  .join(', '),
+              style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+            ),
+          ],
+          if (call.result != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              call.result!,
+              style: const TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 12.5,
+                fontFamily: 'monospace',
+              ),
+            ),
+          ],
+          if (call.error != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              call.error!,
+              style: const TextStyle(color: AppTheme.accentRed, fontSize: 12),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -554,10 +728,12 @@ bool looksLikeLatexLine(String line) {
     return false;
   }
 
-  final candidate = trimmed.replaceFirst(
-    RegExp(r'^(?:[-*+]|\d+[.)])\s+'),
-    '',
-  ).trim();
+  final candidate = trimmed
+      .replaceFirst(
+        RegExp(r'^(?:[-*+]|\d+[.)])\s+'),
+        '',
+      )
+      .trim();
 
   if (candidate.isEmpty) return false;
   if (candidate.startsWith('**') || candidate.startsWith('*')) return false;
@@ -583,12 +759,13 @@ bool looksLikeDisplayMathBlock(String text) {
   if (trimmed.startsWith(r'$$') || trimmed.startsWith(r'\[')) return true;
 
   if (RegExp(
-        r'\\begin\{(aligned|align|gathered|gather|array|cases|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|equation)\}',
-      ).hasMatch(trimmed)) {
+    r'\\begin\{(aligned|align|gathered|gather|array|cases|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|equation)\}',
+  ).hasMatch(trimmed)) {
     return true;
   }
 
-  if (trimmed.contains('\\') && (trimmed.contains('&') || trimmed.contains('='))) {
+  if (trimmed.contains('\\') &&
+      (trimmed.contains('&') || trimmed.contains('='))) {
     return true;
   }
 

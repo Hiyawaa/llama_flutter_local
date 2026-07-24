@@ -106,9 +106,9 @@ class _ImageScannerScreenState extends State<ImageScannerScreen> {
     Navigator.pushNamed(context, '/chat');
 
     try {
-      await provider.sendMessage(prompt, imagePath: path);
+      await provider.sendMessage(prompt, imagePaths: [path]);
     } catch (e, st) {
-      debugPrint('sendMessage(imagePath: $path) failed: $e\n$st');
+      debugPrint('sendMessage(imagePaths: $path) failed: $e\n$st');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

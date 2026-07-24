@@ -7,6 +7,8 @@ import '../models/app_theme.dart';
 import '../models/chat_provider.dart';
 import '../services/llama_service.dart' show ModelStatus;
 import '../services/huggingface_service.dart';
+import '../services/ram_guard_service.dart';
+import '../services/model_loader_service.dart';
 import 'huggingface_screen.dart';
 
 class ModelPickerScreen extends StatefulWidget {
@@ -38,7 +40,12 @@ class _ModelPickerScreenState extends State<ModelPickerScreen> {
       for (final path in hfPaths) {
         final file = File(path);
         final size = await file.length();
-        found.add(_LocalModel(path: path, size: size, source: 'Downloaded'));
+        found.add(_LocalModel(
+          path: path,
+          size: size,
+          source: 'Downloaded',
+          format: ModelFormat.gguf,
+        ));
       }
 
       // 2. App documents root
@@ -67,6 +74,8 @@ class _ModelPickerScreenState extends State<ModelPickerScreen> {
     final deduped = found.where((m) => seen.add(m.path)).toList();
     deduped.sort((a, b) => p.basename(a.path).compareTo(p.basename(b.path)));
 
+    await _annotateLoadability(deduped);
+
     if (mounted) {
       setState(() {
         _localModels = deduped;
@@ -88,10 +97,47 @@ class _ModelPickerScreenState extends State<ModelPickerScreen> {
         final name = p.basename(e.path).toLowerCase();
         if (e is File && name.endsWith('.gguf') && !name.contains('mmproj')) {
           final size = await e.length();
-          out.add(_LocalModel(path: e.path, size: size, source: 'Local'));
+          out.add(_LocalModel(
+            path: e.path,
+            size: size,
+            source: 'Local',
+            format: ModelFormat.gguf,
+          ));
+        } else if (e is File && name.endsWith('.litertlm')) {
+          // Feature 2: detected, but not runnable yet — see
+          // model_loader_service.dart. Still surfaced in the list (greyed
+          // out) rather than hidden, so the user knows the app saw the
+          // file and why it can't be loaded.
+          final size = await e.length();
+          out.add(_LocalModel(
+            path: e.path,
+            size: size,
+            source: 'Local',
+            format: ModelFormat.liteRtLm,
+          ));
         }
       }
     } catch (_) {}
+  }
+
+  /// Feature 2/RAM-guardrail integration: after scanning, check each
+  /// candidate model against RamGuard so unloadable ones can be greyed
+  /// out in the UI up front instead of letting the user tap "Load" and
+  /// hit a rejection (or worse, an OOM) after the fact.
+  Future<void> _annotateLoadability(List<_LocalModel> models) async {
+    if (!mounted) return;
+    final contextSize = context.read<ChatProvider>().contextSize;
+    for (final m in models) {
+      if (m.format != ModelFormat.gguf) {
+        m.ramOk = false; // litertlm: not runnable regardless of RAM yet
+        continue;
+      }
+      final estimateMb = RamGuard.estimateModelLoadMb(
+        fileSizeBytes: m.size,
+        contextSize: contextSize,
+      );
+      m.ramOk = await RamGuard.canLoad(estimateMb, failOpen: true);
+    }
   }
 
   @override
@@ -184,12 +230,21 @@ class _ModelPickerScreenState extends State<ModelPickerScreen> {
                       model: m,
                       provider: provider,
                       isLoaded: provider.llama.loadedPath == m.path,
+                      isEmbedder: provider.embeddingModelPath == m.path,
                       onLoad: () async {
                         await provider.loadModel(m.path);
                         if (context.mounted &&
                             provider.llama.status == ModelStatus.ready) {
                           Navigator.pushNamed(context, '/chat');
                         }
+                      },
+                      onSetEmbedder: () {
+                        provider.setEmbeddingModelPath(m.path);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                              content:
+                                  Text('${m.name} set as RAG embedding model')),
+                        );
                       },
                       onDelete: () => _confirmDelete(context, m),
                     ),
@@ -251,8 +306,18 @@ class _LocalModel {
   final String path;
   final int size;
   final String source;
+  final ModelFormat format;
+  // Mutable: filled in asynchronously by _annotateLoadability after the
+  // initial scan, since RamGuard reads live device memory and shouldn't
+  // block the (fast) file-listing part of the scan.
+  bool ramOk = true;
 
-  _LocalModel({required this.path, required this.size, required this.source});
+  _LocalModel({
+    required this.path,
+    required this.size,
+    required this.source,
+    this.format = ModelFormat.gguf,
+  });
 
   String get name => p.basename(path);
 
@@ -292,172 +357,225 @@ class _LocalModelCard extends StatelessWidget {
   final _LocalModel model;
   final ChatProvider provider;
   final bool isLoaded;
+  final bool isEmbedder;
   final VoidCallback onLoad;
+  final VoidCallback onSetEmbedder;
   final VoidCallback onDelete;
 
   const _LocalModelCard({
     required this.model,
     required this.provider,
     required this.isLoaded,
+    required this.isEmbedder,
     required this.onLoad,
+    required this.onSetEmbedder,
     required this.onDelete,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(
-        color: AppTheme.bgSurface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isLoaded
-              ? AppTheme.accentGreen.withValues(alpha: 0.4)
-              : AppTheme.borderColor,
+    final blocked = !model.ramOk;
+    final isLiteRt = model.format == ModelFormat.liteRtLm;
+
+    return Opacity(
+      opacity: blocked ? 0.55 : 1.0,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        decoration: BoxDecoration(
+          color: AppTheme.bgSurface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isEmbedder
+                ? AppTheme.accentBlue.withValues(alpha: 0.5)
+                : isLoaded
+                    ? AppTheme.accentGreen.withValues(alpha: 0.4)
+                    : blocked
+                        ? AppTheme.accentRed.withValues(alpha: 0.3)
+                        : AppTheme.borderColor,
+          ),
         ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
-        child: Row(
-          children: [
-            // Icon
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                color: (isLoaded ? AppTheme.accentGreen : AppTheme.accentAmber)
-                    .withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-                border: Border.all(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+          child: Row(
+            children: [
+              // Icon
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
                   color:
                       (isLoaded ? AppTheme.accentGreen : AppTheme.accentAmber)
-                          .withValues(alpha: 0.3),
+                          .withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color:
+                        (isLoaded ? AppTheme.accentGreen : AppTheme.accentAmber)
+                            .withValues(alpha: 0.3),
+                  ),
+                ),
+                child: Center(
+                  child: Text(
+                    isLoaded ? '✅' : (blocked ? '🚫' : '🤖'),
+                    style: const TextStyle(fontSize: 18),
+                  ),
                 ),
               ),
-              child: Center(
-                child: Text(
-                  isLoaded ? '✅' : '🤖',
-                  style: const TextStyle(fontSize: 18),
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
+              const SizedBox(width: 12),
 
-            // Name + chips
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    model.name,
-                    style: const TextStyle(
-                      color: AppTheme.textPrimary,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 4),
-                  Wrap(
-                    spacing: 5,
-                    runSpacing: 4,
-                    children: [
-                      _Chip(model.sizeLabel, color: AppTheme.accentAmber),
-                      if (model.quantLabel.isNotEmpty)
-                        _Chip(model.quantLabel, color: AppTheme.accentBlue),
-                      _Chip(model.source, color: AppTheme.textMuted),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-
-            // Actions
-            SizedBox(
-              width: 64,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (!isLoaded)
-                    SizedBox(
-                      width: double.infinity,
-                      height: 34,
-                      child: ElevatedButton(
-                        onPressed: provider.isLoadingModel ? null : onLoad,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppTheme.accentAmber,
-                          foregroundColor: Colors.black,
-                          padding: EdgeInsets.zero,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
-                        child: provider.isLoadingModel
-                            ? const SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.black,
-                                ),
-                              )
-                            : const Text(
-                                'Load',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
+              // Name + chips
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      model.name,
+                      style: const TextStyle(
+                        color: AppTheme.textPrimary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
                       ),
-                    )
-                  else
-                    SizedBox(
-                      width: double.infinity,
-                      height: 34,
-                      child: ElevatedButton(
-                        onPressed: () => Navigator.pushNamed(context, '/chat'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppTheme.accentGreen,
-                          foregroundColor: Colors.black,
-                          padding: EdgeInsets.zero,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 5,
+                      runSpacing: 4,
+                      children: [
+                        _Chip(model.sizeLabel, color: AppTheme.accentAmber),
+                        if (model.quantLabel.isNotEmpty)
+                          _Chip(model.quantLabel, color: AppTheme.accentBlue),
+                        _Chip(model.source, color: AppTheme.textMuted),
+                        if (isEmbedder)
+                          _Chip('Embedder ✓', color: AppTheme.accentBlue),
+                        if (blocked)
+                          _Chip(
+                            isLiteRt ? 'Not supported yet' : 'Not enough RAM',
+                            color: AppTheme.accentRed,
                           ),
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+
+              // Actions
+              SizedBox(
+                width: 64,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (!isLoaded)
+                      SizedBox(
+                        width: double.infinity,
+                        height: 34,
+                        child: ElevatedButton(
+                          onPressed: (provider.isLoadingModel || blocked)
+                              ? null
+                              : onLoad,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: blocked
+                                ? AppTheme.borderColor
+                                : AppTheme.accentAmber,
+                            foregroundColor:
+                                blocked ? AppTheme.textMuted : Colors.black,
+                            padding: EdgeInsets.zero,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: provider.isLoadingModel
+                              ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.black,
+                                  ),
+                                )
+                              : Text(
+                                  blocked ? 'Blocked' : 'Load',
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
                         ),
-                        child: const FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: Text(
-                            'Chat →',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
+                      )
+                    else
+                      SizedBox(
+                        width: double.infinity,
+                        height: 34,
+                        child: ElevatedButton(
+                          onPressed: () =>
+                              Navigator.pushNamed(context, '/chat'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppTheme.accentGreen,
+                            foregroundColor: Colors.black,
+                            padding: EdgeInsets.zero,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: const FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              'Chat →',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
                           ),
                         ),
                       ),
+                    const SizedBox(height: 4),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        GestureDetector(
+                          onTap: onSetEmbedder,
+                          child: Tooltip(
+                            message: isEmbedder
+                                ? 'Current RAG embedding model'
+                                : 'Use for RAG embeddings',
+                            child: Padding(
+                              padding: const EdgeInsets.all(4),
+                              child: Icon(
+                                isEmbedder
+                                    ? Icons.data_object_rounded
+                                    : Icons.data_object_outlined,
+                                color: isEmbedder
+                                    ? AppTheme.accentBlue
+                                    : AppTheme.textMuted,
+                                size: 16,
+                              ),
+                            ),
+                          ),
+                        ),
+                        GestureDetector(
+                          onTap: onDelete,
+                          child: const Padding(
+                            padding: EdgeInsets.all(4),
+                            child: Icon(
+                              Icons.delete_outline_rounded,
+                              color: AppTheme.textMuted,
+                              size: 16,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  const SizedBox(height: 4),
-                  GestureDetector(
-                    onTap: onDelete,
-                    child: const Padding(
-                      padding: EdgeInsets.all(4),
-                      child: Icon(
-                        Icons.delete_outline_rounded,
-                        color: AppTheme.textMuted,
-                        size: 16,
-                      ),
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

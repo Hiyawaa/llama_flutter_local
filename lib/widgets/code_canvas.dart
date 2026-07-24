@@ -175,100 +175,122 @@ class _CodeCanvasSheetState extends State<_CodeCanvasSheet> {
             padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
             child: Row(
               children: [
-                // Language badge
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: langColor.withAlpha(30),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: langColor.withAlpha(80)),
-                  ),
-                  child: Text(
-                    lang.isEmpty ? 'code' : lang,
-                    style: TextStyle(
-                        color: langColor,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600),
+                // Language badge — flexible so a long language name
+                // truncates instead of contributing to the overflow.
+                Flexible(
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: langColor.withAlpha(30),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: langColor.withAlpha(80)),
+                    ),
+                    child: Text(
+                      lang.isEmpty ? 'code' : lang,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: langColor,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
                 Text('$lineCount line${lineCount == 1 ? '' : 's'}',
                     style: const TextStyle(
                         color: AppTheme.textMuted, fontSize: 12)),
-                const Spacer(),
 
-                // Font size controls
-                // FIX: floor was 10, which meant "zoom out" could never go
-                // below a fairly large size. Lowered to 4 so the code can
-                // actually be zoomed out much further.
-                _HeaderBtn(
-                  icon: Icons.text_decrease_rounded,
-                  onTap: () =>
-                      setState(() => _fontSize = (_fontSize - 1).clamp(4, 20)),
-                  tooltip: 'Decrease font',
-                ),
-                _HeaderBtn(
-                  icon: Icons.text_increase_rounded,
-                  onTap: () =>
-                      setState(() => _fontSize = (_fontSize + 1).clamp(4, 20)),
-                  tooltip: 'Increase font',
-                ),
-
-                // Line numbers toggle
-                _HeaderBtn(
-                  icon: Icons.format_list_numbered_rounded,
-                  onTap: () => setState(() => _showLines = !_showLines),
-                  tooltip: 'Toggle line numbers',
-                  active: _showLines,
-                ),
-
-                // Copy button
-                GestureDetector(
-                  onTap: _copy,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: _copied
-                          ? AppTheme.accentGreen.withAlpha(30)
-                          : AppTheme.accentAmber.withAlpha(30),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: _copied
-                            ? AppTheme.accentGreen.withAlpha(100)
-                            : AppTheme.accentAmber.withAlpha(100),
-                      ),
-                    ),
+                // Action buttons (font size, line numbers, copy) — this
+                // cluster is what actually overflowed on narrow screens
+                // (a fixed-width Row of 4+ buttons doesn't shrink just
+                // because a Spacer() is next to it). Wrapping it in a
+                // horizontally-scrolling Expanded means it degrades to a
+                // swipeable strip instead of clipping content off-screen.
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    reverse: true,
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(
-                          _copied ? Icons.check_rounded : Icons.copy_rounded,
-                          size: 14,
-                          color: _copied
-                              ? AppTheme.accentGreen
-                              : AppTheme.accentAmber,
+                        // FIX: floor was 10, which meant "zoom out" could never go
+                        // below a fairly large size. Lowered to 4 so the code can
+                        // actually be zoomed out much further.
+                        _HeaderBtn(
+                          icon: Icons.text_decrease_rounded,
+                          onTap: () => setState(
+                              () => _fontSize = (_fontSize - 1).clamp(4, 20)),
+                          tooltip: 'Decrease font',
                         ),
-                        const SizedBox(width: 4),
-                        Text(
-                          _copied ? 'Copied!' : 'Copy',
-                          style: TextStyle(
-                            color: _copied
-                                ? AppTheme.accentGreen
-                                : AppTheme.accentAmber,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
+                        _HeaderBtn(
+                          icon: Icons.text_increase_rounded,
+                          onTap: () => setState(
+                              () => _fontSize = (_fontSize + 1).clamp(4, 20)),
+                          tooltip: 'Increase font',
+                        ),
+
+                        // Line numbers toggle
+                        _HeaderBtn(
+                          icon: Icons.format_list_numbered_rounded,
+                          onTap: () => setState(() => _showLines = !_showLines),
+                          tooltip: 'Toggle line numbers',
+                          active: _showLines,
+                        ),
+
+                        // Copy button
+                        GestureDetector(
+                          onTap: _copy,
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: _copied
+                                  ? AppTheme.accentGreen.withAlpha(30)
+                                  : AppTheme.accentAmber.withAlpha(30),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: _copied
+                                    ? AppTheme.accentGreen.withAlpha(100)
+                                    : AppTheme.accentAmber.withAlpha(100),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _copied
+                                      ? Icons.check_rounded
+                                      : Icons.copy_rounded,
+                                  size: 14,
+                                  color: _copied
+                                      ? AppTheme.accentGreen
+                                      : AppTheme.accentAmber,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  _copied ? 'Copied!' : 'Copy',
+                                  style: TextStyle(
+                                    color: _copied
+                                        ? AppTheme.accentGreen
+                                        : AppTheme.accentAmber,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
+                        const SizedBox(width: 4),
                       ],
                     ),
                   ),
                 ),
-                const SizedBox(width: 4),
 
-                // Close
+                // Close — pinned outside the scrollable cluster so it's
+                // always reachable without needing to scroll first.
                 IconButton(
                   icon: const Icon(Icons.close_rounded,
                       color: AppTheme.textMuted, size: 20),
