@@ -23,57 +23,6 @@ Pick any `.gguf` file from your storage and start chatting instantly.
 
 No HTTP server. No Termux. No Wi-Fi. Just the app + your GGUF file.
 
----
-
-## Quick Start
-
-### Step 1 — Create a fresh Flutter project
-```powershell
-flutter create llama_flutter_local
-cd llama_flutter_local
-```
-
-### Step 2 — Replace lib/ and pubspec.yaml
-- Delete the generated `lib/` folder
-- Paste in our `lib/` folder
-- Replace `pubspec.yaml` with ours
-
-### Step 3 — Add Android permissions
-Open `android/app/src/main/AndroidManifest.xml` and add inside `<manifest>`:
-```xml
-<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
-<uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
-```
-
-And inside `<application>`:
-```xml
-android:requestLegacyExternalStorage="true"
-```
-
-### Step 4 — Install dependencies
-```powershell
-flutter pub get
-```
-
-### Step 5 — Run
-```powershell
-flutter run
-```
-
----
-
-## Getting a GGUF model on your phone
-
-### Option A — Download directly on phone
-Open your phone browser and go to:
-- https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF
-- Tap **Files and versions**
-- Download `Llama-3.2-3B-Instruct-Q4_K_M.gguf`
-
-### Option B — Transfer from PC
-```powershell
-# Copy via ADB
-adb push C:\models\your-model.gguf /sdcard/Download/
 ```
 
 ### Recommended models by RAM
